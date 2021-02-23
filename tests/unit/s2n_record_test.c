@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 #include <stdio.h>
 
 #include <s2n.h>
+#include "tls/s2n_kex.h"
 
 #include "testlib/s2n_testlib.h"
 
@@ -77,11 +78,12 @@ int main(int argc, char **argv)
     struct s2n_blob r = {.data = random_data, .size = sizeof(random_data)};
 
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
 
     EXPECT_SUCCESS(s2n_hmac_new(&check_mac));
 
     EXPECT_SUCCESS(s2n_hmac_init(&check_mac, S2N_HMAC_SHA1, fixed_iv.data, fixed_iv.size));
-    EXPECT_SUCCESS(s2n_get_urandom_data(&r));
+    EXPECT_OK(s2n_get_public_random_data(&r));
     EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
 
     /* Peer and we are in sync */
@@ -102,6 +104,7 @@ int main(int argc, char **argv)
         if (i < S2N_DEFAULT_FRAGMENT_LENGTH) {
             EXPECT_EQUAL(bytes_written, i);
         } else {
+            /* application data size of intended fragment size + 1 should only send max fragment */
             EXPECT_EQUAL(bytes_written, S2N_DEFAULT_FRAGMENT_LENGTH);
         }
 
@@ -112,6 +115,7 @@ int main(int argc, char **argv)
         EXPECT_EQUAL(conn->out.blob.data[4], bytes_written & 0xff);
         EXPECT_EQUAL(memcmp(conn->out.blob.data + 5, random_data, bytes_written), 0);
 
+        EXPECT_SUCCESS(s2n_stuffer_resize_if_empty(&conn->in, S2N_LARGE_FRAGMENT_LENGTH));
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
         EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5));
@@ -142,10 +146,11 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->out));
         EXPECT_SUCCESS(bytes_written = s2n_record_write(conn, TLS_APPLICATION_DATA, &in));
 
-        if (i < S2N_DEFAULT_FRAGMENT_LENGTH - 20) {
+        if (i <= S2N_DEFAULT_FRAGMENT_LENGTH) {
             EXPECT_EQUAL(bytes_written, i);
         } else {
-            EXPECT_EQUAL(bytes_written, S2N_DEFAULT_FRAGMENT_LENGTH - 20);
+            /* application data size of intended fragment size + 1 should only send max fragment */
+            EXPECT_EQUAL(bytes_written, S2N_DEFAULT_FRAGMENT_LENGTH);
         }
 
         uint16_t predicted_length = bytes_written + 20;
@@ -154,7 +159,7 @@ int main(int argc, char **argv)
         EXPECT_EQUAL(conn->out.blob.data[2], 2);
         EXPECT_EQUAL(conn->out.blob.data[3], (predicted_length >> 8) & 0xff);
         EXPECT_EQUAL(conn->out.blob.data[4], predicted_length & 0xff);
-        EXPECT_EQUAL(memcmp(conn->out.blob.data + 5, random_data, bytes_written), 0)
+        EXPECT_EQUAL(memcmp(conn->out.blob.data + 5, random_data, bytes_written), 0);
 
         uint8_t top = bytes_written >> 8;
         uint8_t bot = bytes_written & 0xff;
@@ -173,7 +178,7 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)));
 
         uint8_t original_seq_num[8];
-        memcpy(original_seq_num, conn->server->client_sequence_number, 8);
+        EXPECT_MEMCPY_SUCCESS(original_seq_num, conn->server->client_sequence_number, 8);
 
         uint8_t content_type;
         uint16_t fragment_length;
@@ -190,13 +195,13 @@ int main(int argc, char **argv)
         EXPECT_FAILURE(s2n_record_parse(conn));
 
         /* Restore the original sequence number */
-        memcpy(conn->server->client_sequence_number, original_seq_num, 8);
+        EXPECT_MEMCPY_SUCCESS(conn->server->client_sequence_number, original_seq_num, 8);
 
         /* Deliberately corrupt a byte of the output and check that the record
-         * won't parse 
+         * won't parse
          */
-        uint32_t byte_to_corrupt;
-        EXPECT_SUCCESS(byte_to_corrupt = s2n_public_random(fragment_length));
+        uint64_t byte_to_corrupt;
+        EXPECT_OK(s2n_public_random(fragment_length, &byte_to_corrupt));
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
         EXPECT_SUCCESS(s2n_stuffer_reread(&conn->out));
@@ -213,8 +218,7 @@ int main(int argc, char **argv)
     conn->actual_protocol_version = S2N_TLS10;
     conn->initial.cipher_suite = &mock_block_cipher_suite;
 
-    uint16_t max_aligned_fragment = S2N_DEFAULT_FRAGMENT_LENGTH - (S2N_DEFAULT_FRAGMENT_LENGTH % 16);
-    for (int i = 0; i <= max_aligned_fragment + 1; i++) {
+    for (int i = 0; i <= S2N_DEFAULT_FRAGMENT_LENGTH + 1; i++) {
         struct s2n_blob in = {.data = random_data,.size = i };
         int bytes_written;
 
@@ -224,10 +228,11 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->out));
         EXPECT_SUCCESS(bytes_written = s2n_record_write(conn, TLS_APPLICATION_DATA, &in));
 
-        if (i < max_aligned_fragment - 20 - 1) {
+        if (i <= S2N_DEFAULT_FRAGMENT_LENGTH) {
             EXPECT_EQUAL(bytes_written, i);
         } else {
-            EXPECT_EQUAL(bytes_written, max_aligned_fragment - 20 - 1);
+            /* application data size of intended fragment size + 1 should only send max fragment */
+            EXPECT_EQUAL(bytes_written, S2N_DEFAULT_FRAGMENT_LENGTH);
         }
 
         uint16_t predicted_length = bytes_written + 1 + 20;
@@ -280,8 +285,7 @@ int main(int argc, char **argv)
     conn->actual_protocol_version = S2N_TLS11;
     conn->initial.cipher_suite = &mock_block_cipher_suite;
 
-    max_aligned_fragment = S2N_DEFAULT_FRAGMENT_LENGTH - (S2N_DEFAULT_FRAGMENT_LENGTH % 16);
-    for (int i = 0; i <= max_aligned_fragment + 1; i++) {
+    for (int i = 0; i <= S2N_DEFAULT_FRAGMENT_LENGTH + 1; i++) {
         struct s2n_blob in = {.data = random_data,.size = i };
         int bytes_written;
 
@@ -291,10 +295,11 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->out));
         EXPECT_SUCCESS(bytes_written = s2n_record_write(conn, TLS_APPLICATION_DATA, &in));
 
-        if (i < max_aligned_fragment - 20 - 16 - 1) {
+        if (i <= S2N_DEFAULT_FRAGMENT_LENGTH) {
             EXPECT_EQUAL(bytes_written, i);
         } else {
-            EXPECT_EQUAL(bytes_written, max_aligned_fragment - 20 - 16 - 1);
+            /* application data size of intended fragment size + 1 should only send max fragment */
+            EXPECT_EQUAL(bytes_written, S2N_DEFAULT_FRAGMENT_LENGTH);
         }
 
         uint16_t predicted_length = bytes_written + 1 + 20 + 16;
@@ -346,10 +351,41 @@ int main(int argc, char **argv)
 
     /* Fast forward the sequence number */
     uint8_t max_num_records[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-    memcpy(conn->initial.server_sequence_number, max_num_records, sizeof(max_num_records));
+    EXPECT_MEMCPY_SUCCESS(conn->initial.server_sequence_number, max_num_records, sizeof(max_num_records));
     EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->out));
     /* Sequence number should wrap around */
     EXPECT_FAILURE(s2n_record_write(conn, TLS_APPLICATION_DATA, &empty_blob));
+
+    /* Test TLS 1.3 Record should reflect as TLS 1.2 version on the wire */
+    {
+        EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->out));
+
+        conn->actual_protocol_version = S2N_TLS13;
+        EXPECT_SUCCESS(s2n_record_write(conn, TLS_APPLICATION_DATA, &empty_blob));
+
+        /* Make sure that TLS 1.3 records appear as TLS 1.2 version */
+        EXPECT_EQUAL(conn->out.blob.data[1], 3);
+        EXPECT_EQUAL(conn->out.blob.data[2], 3);
+
+        /* Copy written bytes for reading */
+        EXPECT_SUCCESS(s2n_stuffer_resize_if_empty(&conn->in, S2N_LARGE_FRAGMENT_LENGTH));
+        EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
+        EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
+        EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5));
+        EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)));
+
+        /* Trigger condition to check for protocol version */
+        conn->actual_protocol_version_established = 1;
+        uint8_t content_type;
+        uint16_t fragment_length;
+        EXPECT_SUCCESS(s2n_record_header_parse(conn, &content_type, &fragment_length));
+
+        /* If record version on wire is TLS 1.3, check s2n_record_header_parse fails */
+        EXPECT_SUCCESS(s2n_stuffer_reread(&conn->header_in));
+        conn->header_in.blob.data[1] = 3;
+        conn->header_in.blob.data[2] = 4;
+        EXPECT_FAILURE(s2n_record_header_parse(conn, &content_type, &fragment_length));
+    }
 
     EXPECT_SUCCESS(s2n_hmac_free(&check_mac));
 

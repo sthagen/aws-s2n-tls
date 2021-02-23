@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License").
 # You may not use this file except in compliance with the License.
@@ -21,26 +21,49 @@ else
 endif
 
 .PHONY : all
-all:
-	${MAKE} -C testlib
-	${MAKE} -C LD_PRELOAD
+all: libs viz
 	${MAKE} -C unit
 	@echo "\033[1m ${COMPILE_INFO} \033[0;39m"
+
+.PHONY : benchmark
+benchmark: libs
+	${MAKE} -C benchmark
+
+.PHONY : valgrind
+valgrind: libs
+	${MAKE} -C unit valgrind
+
+.PHONY : libs
+libs:
+	${MAKE} -C testlib
+	${MAKE} -C LD_PRELOAD
 
 .PHONY : integration
 integration:
 	${MAKE} -C integration
 
+.PHONY : integrationv2
+integrationv2:
+	${MAKE} -C integrationv2
+
 .PHONY : fuzz
 fuzz:
+	${MAKE} -C testlib
 	${MAKE} -C fuzz
+
+.PHONY : viz
+viz:
+	${MAKE} -C viz
 
 include ../s2n.mk
 
 .PHONY : clean
-clean:
+clean: decruft
 	${MAKE} -C testlib decruft
 	${MAKE} -C LD_PRELOAD decruft
-	${MAKE} -C unit decruft
-	${MAKE} -C fuzz decruft
+	${MAKE} -C unit clean
+	${MAKE} -C fuzz clean
+	${MAKE} -C viz clean
 	${MAKE} -C saw decruft
+	${MAKE} -C benchmark decruft
+

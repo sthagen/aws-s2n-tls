@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -24,9 +24,7 @@
 
 int s2n_server_done_recv(struct s2n_connection *conn)
 {
-    if (s2n_stuffer_data_available(&conn->handshake.io)) {
-        S2N_ERROR(S2N_ERR_BAD_MESSAGE);
-    }
+    S2N_ERROR_IF(s2n_stuffer_data_available(&conn->handshake.io), S2N_ERR_BAD_MESSAGE);
 
     return 0;
 }

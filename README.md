@@ -2,26 +2,57 @@
 
 s2n is a C99 implementation of the TLS/SSL protocols that is designed to be simple, small, fast, and with security as a priority. It is released and licensed under the Apache License 2.0. 
 
-[![Build Status](https://img.shields.io/travis/awslabs/s2n.svg)](https://travis-ci.org/awslabs/s2n)
+[![Build Status](https://codebuild.us-west-2.amazonaws.com/badges?uuid=eyJlbmNyeXB0ZWREYXRhIjoiMndlTzJNbHVxWEo3Nm82alp4eGdGNm4rTWdxZDVYU2VTbitIR0ZLbHVtcFFGOW5majk5QnhqaUp3ZEkydG1ueWg0NGlhRE43a1ZnUzZaQTVnSm91TzFFPSIsIml2UGFyYW1ldGVyU3BlYyI6IlJLbW42NENlYXhJNy80QnYiLCJtYXRlcmlhbFNldFNlcmlhbCI6MX0%3D&branch=main)](https://github.com/awslabs/s2n/)
 [![Apache 2 License](https://img.shields.io/github/license/awslabs/s2n.svg)](http://aws.amazon.com/apache-2-0/)
 [![C99](https://img.shields.io/badge/language-C99-blue.svg)](http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf)
+[![Language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/awslabs/s2n.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/awslabs/s2n/context:cpp)
+[![codecov](https://codecov.io/gh/awslabs/s2n/branch/main/graph/badge.svg)](https://codecov.io/gh/awslabs/s2n)
 [![Github forks](https://img.shields.io/github/forks/awslabs/s2n.svg)](https://github.com/awslabs/s2n/network)
 [![Github stars](https://img.shields.io/github/stars/awslabs/s2n.svg)](https://github.com/awslabs/s2n/stargazers)
+[![Join the chat at https://gitter.im/awslabs/s2n](https://badges.gitter.im/awslabs/s2n.svg)](https://gitter.im/awslabs/s2n?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-## Getting Started
+## Quickstart for Ubuntu
 1. Fork s2n on GitHub
-2. Run the following commands on either Ubuntu or Mac OSX.
+2. Run the following commands on Ubuntu.
 ```
 git clone https://github.com/${YOUR_GITHUB_ACCOUNT_NAME}/s2n.git
 cd s2n
 
-# Pick an "env" line from the .travis.yml file and run it, in this case choose the openssl-1.1.0 build
-S2N_LIBCRYPTO=openssl-1.1.0 BUILD_S2N=true TESTS=integration GCC6_REQUIRED=true
+# Pick an "env" line from the codebuild/codebuild.config file and run it, in this case choose the openssl-1.1.1 with GCC 9 build
+S2N_LIBCRYPTO=openssl-1.1.1 BUILD_S2N=true TESTS=integration GCC_VERSION=9
 
-source .travis/s2n_setup_env.sh
-.travis/s2n_install_test_dependencies.sh
-.travis/s2n_travis_build.sh
+source codebuild/bin/s2n_setup_env.sh
+codebuild/bin/s2n_install_test_dependencies.sh
+codebuild/bin/s2n_codebuild.sh
 ```
+
+## Quickstart for OSX (or other platforms)
+
+If you are building on OSX, or simply don't want to execute the entire build script above, you can use build tools like Ninja.
+
+### OSX
+
+An example of building on OSX:
+
+```sh
+brew install ninja cmake
+git clone https://github.com/${YOUR_GITHUB_ACCOUNT_NAME}/s2n.git
+mkdir s2n_build
+cd s2n_build
+
+# Build with debug symbols and a specific OpenSSL version
+cmake -GNinja \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_PREFIX_PATH=/usr/local/Cellar/openssl@1.1/1.1.1g \
+    ../s2n
+ninja -j6
+CTEST_PARALLEL_LEVEL=5 ninja test
+```
+
+## Have a Question?
+If you have any questions about Submitting PR's, Opening Issues, s2n API usage, or something similar, we have a public chatroom available here to answer your questions: https://gitter.im/awslabs/s2n
+
+Otherwise, if you think you might have found a security impacting issue, please instead follow [our Security Notification Process.](#security-issue-notifications)
 
 ## Using s2n
 
@@ -50,7 +81,7 @@ int bytes_written;
 bytes_written = s2n_send(conn, "Hello World", sizeof("Hello World"), &blocked);
 ```
 
-For details on building the s2n library and how to use s2n in an application you are developing, see the [API Reference](https://github.com/awslabs/s2n/blob/master/docs/USAGE-GUIDE.md).
+For details on building the s2n library and how to use s2n in an application you are developing, see the [API Reference](https://github.com/awslabs/s2n/blob/main/docs/USAGE-GUIDE.md).
 
 ## s2n features
 
@@ -114,7 +145,7 @@ AWS Security via our [vulnerability reporting page](http://aws.amazon.com/securi
 If you package or distribute s2n, or use s2n as part of a large multi-user service, you may be eligible for pre-notification of future s2n releases. Please contact s2n-pre-notification@amazon.com.  
 
 ## Contributing to s2n
-If you are interested in contributing to s2n, please see our [development guide](https://github.com/awslabs/s2n/blob/master/docs/DEVELOPMENT-GUIDE.md).
+If you are interested in contributing to s2n, please see our [development guide](https://github.com/awslabs/s2n/blob/main/docs/DEVELOPMENT-GUIDE.md).
 
 ## Language Bindings for s2n
-See our [language bindings list](https://github.com/awslabs/s2n/blob/master/docs/BINDINGS.md) for language bindings for s2n that we're aware of. 
+See our [language bindings list](https://github.com/awslabs/s2n/blob/main/docs/BINDINGS.md) for language bindings for s2n that we're aware of. 

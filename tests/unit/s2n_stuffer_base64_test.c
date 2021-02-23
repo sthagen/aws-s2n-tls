@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -24,12 +24,13 @@ int main(int argc, char **argv)
 {
     char hello_world[] = "Hello world!";
     uint8_t hello_world_base64[] = "SGVsbG8gd29ybGQhAA==";
-    struct s2n_stuffer stuffer, known_data, scratch, entropy, mirror;
+    struct s2n_stuffer stuffer = {0}, known_data = {0}, scratch = {0}, entropy = {0}, mirror = {0};
     uint8_t pad[50];
     struct s2n_blob r = {.data = pad, .size = sizeof(pad)};
 
     BEGIN_TEST();
-    
+    EXPECT_SUCCESS(s2n_disable_tls13());
+
 
     /* Create a 100 byte stuffer */
     EXPECT_SUCCESS(s2n_stuffer_alloc(&stuffer, 1000));
@@ -60,7 +61,7 @@ int main(int argc, char **argv)
 
         /* Get i bytes of random data */
         r.size = i;
-        EXPECT_SUCCESS(s2n_get_urandom_data(&r));
+        EXPECT_OK(s2n_get_public_random_data(&r));
         EXPECT_SUCCESS(s2n_stuffer_write_bytes(&entropy, pad, i));
 
         /* Write i bytes  it, base64 encoded */

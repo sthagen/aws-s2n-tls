@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -30,13 +30,22 @@
 
 int s2n_client_cert_recv(struct s2n_connection *conn)
 {
+    if (conn->actual_protocol_version == S2N_TLS13) {
+        uint8_t certificate_request_context_len;
+        GUARD(s2n_stuffer_read_uint8(&conn->handshake.io, &certificate_request_context_len));
+        S2N_ERROR_IF(certificate_request_context_len != 0,S2N_ERR_BAD_MESSAGE);
+    }
+
     struct s2n_stuffer *in = &conn->handshake.io;
-    struct s2n_blob client_cert_chain;
+    struct s2n_blob client_cert_chain = {0};
 
     GUARD(s2n_stuffer_read_uint24(in, &client_cert_chain.size));
 
-    if (client_cert_chain.size > s2n_stuffer_data_available(in) || client_cert_chain.size == 0) {
-        S2N_ERROR(S2N_ERR_BAD_MESSAGE);
+    S2N_ERROR_IF(client_cert_chain.size > s2n_stuffer_data_available(in), S2N_ERR_BAD_MESSAGE);
+
+    if (client_cert_chain.size == 0) {
+        GUARD(s2n_conn_set_handshake_no_client_cert(conn));
+        return 0;
     }
 
     client_cert_chain.data = s2n_stuffer_raw_read(in, client_cert_chain.size);
@@ -44,40 +53,47 @@ int s2n_client_cert_recv(struct s2n_connection *conn)
 
     s2n_cert_public_key public_key;
     GUARD(s2n_pkey_zero_init(&public_key));
-    
-    s2n_cert_type cert_type;
+
+    s2n_pkey_type pkey_type;
 
     /* Determine the Cert Type, Verify the Cert, and extract the Public Key */
-    const s2n_cert_validation_code rc = conn->config->verify_cert_chain_cb(conn, client_cert_chain.data, client_cert_chain.size,
-            &cert_type, &public_key, conn->config->verify_cert_context);
+    S2N_ERROR_IF(s2n_x509_validator_validate_cert_chain(&conn->x509_validator, conn,
+                                                 client_cert_chain.data, client_cert_chain.size,
+                                                        &pkey_type, &public_key) != S2N_CERT_OK, S2N_ERR_CERT_UNTRUSTED);
 
-    if (rc != S2N_CERT_OK) {
-        /* Don't use GUARD for verify_cert_chain_cb so that s2n_errno is set. */
-        S2N_ERROR(S2N_ERR_CERT_UNTRUSTED);
-    }
-
-    switch (cert_type) {
-    /* s2n currently only supports RSA Certificates */
-    case S2N_CERT_TYPE_RSA_SIGN:
-        GUARD(s2n_rsa_check_key_exists(&public_key));
-        GUARD(s2n_pkey_setup_for_type(&public_key, cert_type));
-        conn->secure.client_cert_type = S2N_CERT_TYPE_RSA_SIGN;
-        s2n_dup(&client_cert_chain, &conn->secure.client_cert_chain);
-        conn->secure.client_public_key = public_key;
-        break;
-    default:
-        S2N_ERROR(S2N_ERR_CERT_TYPE_UNSUPPORTED);
-    }
-
+    conn->secure.client_cert_pkey_type = pkey_type;
+    GUARD(s2n_pkey_setup_for_type(&public_key, pkey_type));
+    
+    GUARD(s2n_pkey_check_key_exists(&public_key));
+    GUARD(s2n_dup(&client_cert_chain, &conn->secure.client_cert_chain));
+    conn->secure.client_public_key = public_key;
+    
     return 0;
 }
 
 
 int s2n_client_cert_send(struct s2n_connection *conn)
 {
-    struct s2n_cert_chain_and_key *chain_and_key = conn->config->cert_and_key_pairs;
-    /* TODO: Check that RSA is in conn->server_preferred_cert_types and conn->secure.client_cert_sig_algorithm */
+    struct s2n_cert_chain_and_key *chain_and_key = conn->handshake_params.our_chain_and_key;
 
-    GUARD(s2n_send_cert_chain(&conn->handshake.io, &chain_and_key->cert_chain));
+    if (conn->actual_protocol_version == S2N_TLS13) {
+        /* If this message is in response to a CertificateRequest, the value of
+         * certificate_request_context in that message.
+         * https://tools.ietf.org/html/rfc8446#section-4.4.2
+         *
+         * This field SHALL be zero length unless used for the post-handshake authentication
+         * https://tools.ietf.org/html/rfc8446#section-4.3.2
+         */
+        uint8_t certificate_request_context_len = 0;
+        GUARD(s2n_stuffer_write_uint8(&conn->handshake.io, certificate_request_context_len));
+    }
+
+    if (chain_and_key == NULL) {
+        GUARD(s2n_conn_set_handshake_no_client_cert(conn));
+        GUARD(s2n_send_empty_cert_chain(&conn->handshake.io));
+        return 0;
+    }
+
+    GUARD(s2n_send_cert_chain(conn, &conn->handshake.io, chain_and_key));
     return 0;
 }

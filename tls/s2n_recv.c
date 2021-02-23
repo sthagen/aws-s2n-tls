@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@
 #include "tls/s2n_resume.h"
 #include "tls/s2n_alerts.h"
 #include "tls/s2n_tls.h"
+#include "tls/s2n_post_handshake.h"
 
 #include "stuffer/s2n_stuffer.h"
 
@@ -37,39 +38,43 @@
 #include "utils/s2n_safety.h"
 #include "utils/s2n_blob.h"
 
+S2N_RESULT s2n_read_in_bytes(struct s2n_connection *conn, struct s2n_stuffer *output, uint32_t length)
+{
+    while (s2n_stuffer_data_available(output) < length) {
+        uint32_t remaining = length - s2n_stuffer_data_available(output);
+
+        errno = 0;
+        int r = s2n_connection_recv_stuffer(output, conn, remaining);
+        if (r == 0) {
+            conn->closed = 1;
+            BAIL(S2N_ERR_CLOSED);
+        } else if (r < 0) {
+            if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                BAIL(S2N_ERR_IO_BLOCKED);
+            }
+            BAIL(S2N_ERR_IO);
+        }
+        conn->wire_bytes_in += r;
+    }
+
+    return S2N_RESULT_OK;
+}
+
 int s2n_read_full_record(struct s2n_connection *conn, uint8_t * record_type, int *isSSLv2)
 {
-    int r;
-
     *isSSLv2 = 0;
 
     /* If the record has already been decrypted, then leave it alone */
     if (conn->in_status == PLAINTEXT) {
         /* Only application data packets count as plaintext */
         *record_type = TLS_APPLICATION_DATA;
-        return 0;
+        return S2N_SUCCESS;
     }
+    GUARD(s2n_stuffer_resize_if_empty(&conn->in, S2N_LARGE_FRAGMENT_LENGTH));
 
     /* Read the record until we at least have a header */
-    while (s2n_stuffer_data_available(&conn->header_in) < S2N_TLS_RECORD_HEADER_LENGTH) {
-        int remaining = S2N_TLS_RECORD_HEADER_LENGTH - s2n_stuffer_data_available(&conn->header_in);
+    GUARD_AS_POSIX(s2n_read_in_bytes(conn, &conn->header_in, S2N_TLS_RECORD_HEADER_LENGTH));
 
-        if (s2n_connection_is_managed_corked(conn)) {
-            GUARD(s2n_socket_set_read_size(conn, remaining));
-        }
-        r = s2n_connection_recv_stuffer(&conn->header_in, conn, remaining);
-
-        if (r == 0) {
-            conn->closed = 1;
-            S2N_ERROR(S2N_ERR_CLOSED);
-        } else if (r < 0) {
-            if (errno == EWOULDBLOCK || errno == EAGAIN) {
-                S2N_ERROR(S2N_ERR_BLOCKED);
-            }
-            S2N_ERROR(S2N_ERR_IO);
-        }
-        conn->wire_bytes_in += r;
-    }
     uint16_t fragment_length;
 
     /* If the first bit is set then this is an SSLv2 record */
@@ -79,36 +84,17 @@ int s2n_read_full_record(struct s2n_connection *conn, uint8_t * record_type, int
 
         if (s2n_sslv2_record_header_parse(conn, record_type, &conn->client_protocol_version, &fragment_length) < 0) {
             GUARD(s2n_connection_kill(conn));
-            return -1;
+            S2N_ERROR_PRESERVE_ERRNO();
         }
     } else {
         if (s2n_record_header_parse(conn, record_type, &fragment_length) < 0) {
             GUARD(s2n_connection_kill(conn));
-            return -1;
+            S2N_ERROR_PRESERVE_ERRNO();
         }
     }
 
     /* Read enough to have the whole record */
-    while (s2n_stuffer_data_available(&conn->in) < fragment_length) {
-        int remaining = fragment_length - s2n_stuffer_data_available(&conn->in);
-
-        if (s2n_connection_is_managed_corked(conn)) {
-            GUARD(s2n_socket_set_read_size(conn, remaining));
-        }
-
-        r = s2n_connection_recv_stuffer(&conn->in, conn, remaining);
-
-        if (r == 0) {
-            conn->closed = 1;
-            S2N_ERROR(S2N_ERR_CLOSED);
-        } else if (r < 0) {
-            if (errno == EWOULDBLOCK || errno == EAGAIN) {
-                S2N_ERROR(S2N_ERR_BLOCKED);
-            }
-            S2N_ERROR(S2N_ERR_IO);
-        }
-        conn->wire_bytes_in += r;
-    }
+    GUARD_AS_POSIX(s2n_read_in_bytes(conn, &conn->in, fragment_length));
 
     if (*isSSLv2) {
         return 0;
@@ -117,24 +103,31 @@ int s2n_read_full_record(struct s2n_connection *conn, uint8_t * record_type, int
     /* Decrypt and parse the record */
     if (s2n_record_parse(conn) < 0) {
         GUARD(s2n_connection_kill(conn));
+        S2N_ERROR_PRESERVE_ERRNO();
+    }
 
-        return -1;
+    /* In TLS 1.3, encrypted handshake records would appear to be of record type
+    * TLS_APPLICATION_DATA. The actual record content type is found after the encrypted
+    * is decrypted.
+    */
+    if (conn->actual_protocol_version == S2N_TLS13 && *record_type == TLS_APPLICATION_DATA) {
+        GUARD(s2n_tls13_parse_record_type(&conn->in, record_type));
     }
 
     return 0;
 }
 
-ssize_t s2n_recv(struct s2n_connection * conn, void *buf, ssize_t size, s2n_blocked_status * blocked)
+ssize_t s2n_recv_impl(struct s2n_connection * conn, void *buf, ssize_t size, s2n_blocked_status * blocked)
 {
     ssize_t bytes_read = 0;
     struct s2n_blob out = {.data = (uint8_t *) buf };
 
     if (conn->closed) {
-        GUARD(s2n_connection_wipe(conn));
         return 0;
     }
-
     *blocked = S2N_BLOCKED_ON_READ;
+
+    S2N_ERROR_IF(conn->config->quic_enabled, S2N_ERR_UNSUPPORTED_WITH_QUIC);
 
     while (size && !conn->closed) {
         int isSSLv2 = 0;
@@ -144,7 +137,6 @@ ssize_t s2n_recv(struct s2n_connection * conn, void *buf, ssize_t size, s2n_bloc
             if (s2n_errno == S2N_ERR_CLOSED) {
                 *blocked = S2N_NOT_BLOCKED;
                 if (!bytes_read) {
-                    GUARD(s2n_connection_wipe(conn));
                     return 0;
                 } else {
                     return bytes_read;
@@ -152,29 +144,32 @@ ssize_t s2n_recv(struct s2n_connection * conn, void *buf, ssize_t size, s2n_bloc
             }
 
             /* Don't propagate the error if we already read some bytes */
-            if (s2n_errno == S2N_ERR_BLOCKED && bytes_read) {
+            if (s2n_errno == S2N_ERR_IO_BLOCKED && bytes_read) {
                 s2n_errno = S2N_ERR_OK;
                 return bytes_read;
             }
 
             /* If we get here, it's an error condition */
-            if (s2n_errno != S2N_ERR_BLOCKED && s2n_allowed_to_cache_connection(conn) && conn->session_id_len) {
-                conn->config->cache_delete(conn->config->cache_delete_data, conn->session_id, conn->session_id_len);
+            if (s2n_errno != S2N_ERR_IO_BLOCKED && s2n_allowed_to_cache_connection(conn) && conn->session_id_len) {
+                conn->config->cache_delete(conn, conn->config->cache_delete_data, conn->session_id, conn->session_id_len);
             }
 
-            return -1;
+            S2N_ERROR_PRESERVE_ERRNO();
         }
 
-        if (isSSLv2) {
-            S2N_ERROR(S2N_ERR_BAD_MESSAGE);
-        }
+        S2N_ERROR_IF(isSSLv2, S2N_ERR_BAD_MESSAGE);
 
         if (record_type != TLS_APPLICATION_DATA) {
-            if (record_type == TLS_ALERT) {
-                GUARD(s2n_process_alert_fragment(conn));
-                GUARD(s2n_flush(conn, blocked));
+            switch (record_type)
+            {
+                case TLS_ALERT:
+                    GUARD(s2n_process_alert_fragment(conn));
+                    GUARD(s2n_flush(conn, blocked));
+                    break;
+                case TLS_HANDSHAKE:
+                    GUARD(s2n_post_handshake_recv(conn));
+                    break;
             }
-
             GUARD(s2n_stuffer_wipe(&conn->header_in));
             GUARD(s2n_stuffer_wipe(&conn->in));
             conn->in_status = ENCRYPTED;
@@ -209,6 +204,19 @@ ssize_t s2n_recv(struct s2n_connection * conn, void *buf, ssize_t size, s2n_bloc
     return bytes_read;
 }
 
+ssize_t s2n_recv(struct s2n_connection * conn, void *buf, ssize_t size, s2n_blocked_status * blocked)
+{
+    ENSURE_POSIX(!conn->recv_in_use, S2N_ERR_REENTRANCY);
+    conn->recv_in_use = true;
+    ssize_t result = s2n_recv_impl(conn, buf, size, blocked);
+    conn->recv_in_use = false;
+    return result;
+}
+
+uint32_t s2n_peek(struct s2n_connection *conn) {
+    return s2n_stuffer_data_available(&conn->in);
+}
+
 int s2n_recv_close_notify(struct s2n_connection *conn, s2n_blocked_status * blocked)
 {
     uint8_t record_type;
@@ -217,13 +225,9 @@ int s2n_recv_close_notify(struct s2n_connection *conn, s2n_blocked_status * bloc
 
     GUARD(s2n_read_full_record(conn, &record_type, &isSSLv2));
 
-    if (isSSLv2) {
-        S2N_ERROR(S2N_ERR_BAD_MESSAGE);
-    }
+    S2N_ERROR_IF(isSSLv2, S2N_ERR_BAD_MESSAGE);
 
-    if (record_type != TLS_ALERT) {
-        S2N_ERROR(S2N_ERR_SHUTDOWN_RECORD_TYPE);
-    }
+    S2N_ERROR_IF(record_type != TLS_ALERT, S2N_ERR_SHUTDOWN_RECORD_TYPE);
 
     /* Only succeeds for an incoming close_notify alert */
     GUARD(s2n_process_alert_fragment(conn));
@@ -231,3 +235,4 @@ int s2n_recv_close_notify(struct s2n_connection *conn, s2n_blocked_status * bloc
     *blocked = S2N_NOT_BLOCKED;
     return 0;
 }
+

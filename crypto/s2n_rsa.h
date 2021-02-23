@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -35,11 +35,6 @@ typedef struct s2n_rsa_key s2n_rsa_public_key;
 typedef struct s2n_rsa_key s2n_rsa_private_key;
 
 extern int s2n_rsa_pkey_init(struct s2n_pkey *pkey);
-
-extern int s2n_rsa_public_encrypted_size(const s2n_rsa_public_key *key);
-extern int s2n_rsa_private_encrypted_size(const s2n_rsa_private_key *key);
-
-extern int s2n_rsa_check_key_exists(const struct s2n_pkey *pkey);
 
 extern int s2n_evp_pkey_to_rsa_public_key(s2n_rsa_public_key *rsa_key, EVP_PKEY *pkey);
 extern int s2n_evp_pkey_to_rsa_private_key(s2n_rsa_private_key *rsa_key, EVP_PKEY *pkey);

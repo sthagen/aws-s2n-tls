@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ struct s2n_prf_working_space {
 /* The s2n p_hash implementation is abstracted to allow for separate implementations, using
  * either s2n's formally verified HMAC or OpenSSL's EVP HMAC, for use by the TLS PRF. */
 struct s2n_p_hash_hmac {
-    int (*new) (struct s2n_prf_working_space *ws);
+    int (*alloc) (struct s2n_prf_working_space *ws);
     int (*init) (struct s2n_prf_working_space *ws, s2n_hmac_algorithm alg, struct s2n_blob *secret);
     int (*update) (struct s2n_prf_working_space *ws, const void *data, uint32_t size);
     int (*final) (struct s2n_prf_working_space *ws, void *digest, uint32_t size);
@@ -63,7 +63,8 @@ struct s2n_p_hash_hmac {
 
 extern int s2n_prf_new(struct s2n_connection *conn);
 extern int s2n_prf_free(struct s2n_connection *conn);
-extern int s2n_prf_master_secret(struct s2n_connection *conn, struct s2n_blob *premaster_secret);
+extern int s2n_tls_prf_master_secret(struct s2n_connection *conn, struct s2n_blob *premaster_secret);
+extern int s2n_hybrid_prf_master_secret(struct s2n_connection *conn, struct s2n_blob *premaster_secret);
 extern int s2n_prf_key_expansion(struct s2n_connection *conn);
 extern int s2n_prf_server_finished(struct s2n_connection *conn);
 extern int s2n_prf_client_finished(struct s2n_connection *conn);

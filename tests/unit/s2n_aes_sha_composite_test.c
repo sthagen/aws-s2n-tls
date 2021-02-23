@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -32,6 +32,25 @@
 #include "crypto/s2n_hmac.h"
 #include "crypto/s2n_hash.h"
 
+/* Explicit IV starts after the TLS record header. */
+#define EXPLICIT_IV_OFFSET S2N_TLS_RECORD_HEADER_LENGTH
+
+/* IVs should never be repeated with the same session key. */
+static int ensure_explicit_iv_is_unique(uint8_t existing_explicit_ivs[S2N_DEFAULT_FRAGMENT_LENGTH][S2N_TLS_MAX_IV_LEN],
+        size_t num_existing_ivs,
+        const uint8_t *candidate_iv,
+        uint16_t iv_len)
+{
+    for (size_t i = 0; i < num_existing_ivs; i++) {
+        if (memcmp(existing_explicit_ivs[i], candidate_iv, iv_len) == 0) {
+            return S2N_FAILURE;
+        }
+    }
+
+    return S2N_SUCCESS;
+}
+
+
 int main(int argc, char **argv)
 {
     struct s2n_connection *conn;
@@ -43,8 +62,11 @@ int main(int argc, char **argv)
     struct s2n_blob aes128 = {.data = aes128_key,.size = sizeof(aes128_key) };
     struct s2n_blob aes256 = {.data = aes256_key,.size = sizeof(aes256_key) };
     struct s2n_blob r = {.data = random_data, .size = sizeof(random_data)};
+    /* Stores explicit IVs used in each test case to validate uniqueness. */
+    uint8_t existing_explicit_ivs[S2N_DEFAULT_FRAGMENT_LENGTH + 2][S2N_TLS_MAX_IV_LEN];
 
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
 
     /* Skip test if we can't use the ciphers */
     if (!s2n_aes128_sha.is_available()    ||
@@ -55,14 +77,14 @@ int main(int argc, char **argv)
     }
 
     EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
-    EXPECT_SUCCESS(s2n_get_urandom_data(&r));
+    EXPECT_OK(s2n_get_public_random_data(&r));
 
     /* Peer and we are in sync */
     conn->server = &conn->initial;
     conn->client = &conn->initial;
 
-    int max_aligned_fragment = S2N_DEFAULT_FRAGMENT_LENGTH - (S2N_DEFAULT_FRAGMENT_LENGTH % 16);
-    uint8_t proto_versions[3] = { S2N_TLS10, S2N_TLS11, S2N_TLS12 };
+    const int max_aligned_fragment = S2N_DEFAULT_FRAGMENT_LENGTH;
+    const uint8_t proto_versions[3] = { S2N_TLS10, S2N_TLS11, S2N_TLS12 };
 
     /* test the composite AES128_SHA1 cipher  */
     conn->initial.cipher_suite->record_alg = &s2n_record_alg_aes128_sha_composite;
@@ -71,7 +93,7 @@ int main(int argc, char **argv)
      * There are a few gotchas with respect to explicit IV length and payload length
      */
     for (int j = 0; j < 3; j++ ) {
-        for (int i = 0; i < max_aligned_fragment; i++) {
+        for (int i = 0; i <= max_aligned_fragment + 1; i++) {
             struct s2n_blob in = {.data = random_data,.size = i };
             int bytes_written;
 
@@ -93,10 +115,11 @@ int main(int argc, char **argv)
                 explicit_iv_len = 0;
             }
 
-            if (i < max_aligned_fragment - SHA_DIGEST_LENGTH - explicit_iv_len - 1) {
+            if (i <= max_aligned_fragment) {
                 EXPECT_EQUAL(bytes_written, i);
             } else {
-                EXPECT_EQUAL(bytes_written, max_aligned_fragment - SHA_DIGEST_LENGTH - explicit_iv_len - 1);
+                /* application data size of intended fragment size + 1 should only send max fragment */
+                EXPECT_EQUAL(bytes_written, max_aligned_fragment);
             }
 
             uint16_t predicted_length = bytes_written + 1 + SHA_DIGEST_LENGTH + explicit_iv_len;
@@ -111,14 +134,22 @@ int main(int argc, char **argv)
 
             /* The data should be encrypted */
             if (bytes_written > 10) {
-                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + 5, random_data, bytes_written), 0);
+                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + EXPLICIT_IV_OFFSET + explicit_iv_len, random_data, bytes_written), 0);
+            }
+
+            if (explicit_iv_len > 0) {
+                /* The explicit IV for every record written should be random */
+                uint8_t *explicit_iv = conn->out.blob.data + EXPLICIT_IV_OFFSET;
+                EXPECT_SUCCESS(ensure_explicit_iv_is_unique(existing_explicit_ivs, i, explicit_iv, explicit_iv_len));
+                /* Record this IV */
+                memcpy(existing_explicit_ivs[i], explicit_iv, explicit_iv_len);
             }
 
             /* Copy the encrypted out data to the in data */
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5))
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)))
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, S2N_TLS_RECORD_HEADER_LENGTH));
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)));
 
             /* Let's decrypt it */
             uint8_t content_type;
@@ -136,7 +167,7 @@ int main(int argc, char **argv)
     /* test the composite AES256_SHA1 cipher  */
     conn->initial.cipher_suite->record_alg = &s2n_record_alg_aes256_sha_composite;
     for (int j = 0; j < 3; j++ ) {
-        for (int i = 0; i < max_aligned_fragment; i++) {
+        for (int i = 0; i <= max_aligned_fragment + 1; i++) {
             struct s2n_blob in = {.data = random_data,.size = i };
             int bytes_written;
 
@@ -158,10 +189,11 @@ int main(int argc, char **argv)
                 explicit_iv_len = 0;
             }
 
-            if (i < max_aligned_fragment - SHA_DIGEST_LENGTH - explicit_iv_len - 1) {
+            if (i <= max_aligned_fragment) {
                 EXPECT_EQUAL(bytes_written, i);
             } else {
-                EXPECT_EQUAL(bytes_written, max_aligned_fragment - SHA_DIGEST_LENGTH - explicit_iv_len - 1);
+                /* application data size of intended fragment size + 1 should only send max fragment */
+                EXPECT_EQUAL(bytes_written, max_aligned_fragment);
             }
 
             uint16_t predicted_length = bytes_written + 1 + SHA_DIGEST_LENGTH + explicit_iv_len;
@@ -176,14 +208,22 @@ int main(int argc, char **argv)
 
             /* The data should be encrypted */
             if (bytes_written > 10) {
-                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + 5, random_data, bytes_written), 0);
+                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + EXPLICIT_IV_OFFSET + explicit_iv_len, random_data, bytes_written), 0);
+            }
+
+            if (explicit_iv_len > 0) {
+                /* The explicit IV for every record written should be random */
+                uint8_t *explicit_iv = conn->out.blob.data + EXPLICIT_IV_OFFSET;
+                EXPECT_SUCCESS(ensure_explicit_iv_is_unique(existing_explicit_ivs, i, explicit_iv, explicit_iv_len));
+                /* Record this IV */
+                memcpy(existing_explicit_ivs[i], explicit_iv, explicit_iv_len);
             }
 
             /* Copy the encrypted out data to the in data */
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5))
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)))
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, S2N_TLS_RECORD_HEADER_LENGTH));
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)));
 
             /* Let's decrypt it */
             uint8_t content_type;
@@ -202,7 +242,7 @@ int main(int argc, char **argv)
     /* test the composite AES128_SHA256 cipher  */
     conn->initial.cipher_suite->record_alg = &s2n_record_alg_aes128_sha256_composite;
     for (int j = 0; j < 3; j++ ) {
-        for (int i = 0; i < max_aligned_fragment; i++) {
+        for (int i = 0; i < max_aligned_fragment + 1; i++) {
             struct s2n_blob in = {.data = random_data,.size = i };
             int bytes_written;
 
@@ -224,10 +264,11 @@ int main(int argc, char **argv)
                 explicit_iv_len = 0;
             }
 
-            if (i < max_aligned_fragment - SHA256_DIGEST_LENGTH - explicit_iv_len - 1) {
+            if (i <= max_aligned_fragment) {
                 EXPECT_EQUAL(bytes_written, i);
             } else {
-                EXPECT_EQUAL(bytes_written, max_aligned_fragment - SHA256_DIGEST_LENGTH - explicit_iv_len - 1);
+                /* application data size of intended fragment size + 1 should only send max fragment */
+                EXPECT_EQUAL(bytes_written, max_aligned_fragment);
             }
 
             uint16_t predicted_length = bytes_written + 1 + SHA256_DIGEST_LENGTH + explicit_iv_len;
@@ -242,14 +283,22 @@ int main(int argc, char **argv)
 
             /* The data should be encrypted */
             if (bytes_written > 10) {
-                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + 5, random_data, bytes_written), 0);
+                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + EXPLICIT_IV_OFFSET + explicit_iv_len, random_data, bytes_written), 0);
+            }
+
+            if (explicit_iv_len > 0) {
+                /* The explicit IV for every record written should be random */
+                uint8_t *explicit_iv = conn->out.blob.data + EXPLICIT_IV_OFFSET;
+                EXPECT_SUCCESS(ensure_explicit_iv_is_unique(existing_explicit_ivs, i, explicit_iv, explicit_iv_len));
+                /* Record this IV */
+                memcpy(existing_explicit_ivs[i], explicit_iv, explicit_iv_len);
             }
 
             /* Copy the encrypted out data to the in data */
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5))
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)))
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, S2N_TLS_RECORD_HEADER_LENGTH));
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)));
 
             /* Let's decrypt it */
             uint8_t content_type;
@@ -267,7 +316,7 @@ int main(int argc, char **argv)
     /* test the composite AES256_SHA256 cipher  */
     conn->initial.cipher_suite->record_alg = &s2n_record_alg_aes256_sha256_composite;
     for (int j = 0; j < 3; j++ ) {
-        for (int i = 0; i < max_aligned_fragment; i++) {
+        for (int i = 0; i <= max_aligned_fragment + 1; i++) {
             struct s2n_blob in = {.data = random_data,.size = i };
             int bytes_written;
 
@@ -289,10 +338,11 @@ int main(int argc, char **argv)
                 explicit_iv_len = 0;
             }
 
-            if (i < max_aligned_fragment - SHA256_DIGEST_LENGTH - explicit_iv_len - 1) {
+            if (i <= max_aligned_fragment) {
                 EXPECT_EQUAL(bytes_written, i);
             } else {
-                EXPECT_EQUAL(bytes_written, max_aligned_fragment - SHA256_DIGEST_LENGTH - explicit_iv_len - 1);
+                /* application data size of intended fragment size + 1 should only send max fragment */
+                EXPECT_EQUAL(bytes_written, max_aligned_fragment);
             }
 
             uint16_t predicted_length = bytes_written + 1 + SHA256_DIGEST_LENGTH + explicit_iv_len;
@@ -307,14 +357,22 @@ int main(int argc, char **argv)
 
             /* The data should be encrypted */
             if (bytes_written > 10) {
-                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + 5, random_data, bytes_written), 0);
+                EXPECT_NOT_EQUAL(memcmp(conn->out.blob.data + EXPLICIT_IV_OFFSET + explicit_iv_len, random_data, bytes_written), 0);
+            }
+
+            if (explicit_iv_len > 0) {
+                /* The explicit IV for every record written should be random */
+                uint8_t *explicit_iv = conn->out.blob.data + EXPLICIT_IV_OFFSET;
+                EXPECT_SUCCESS(ensure_explicit_iv_is_unique(existing_explicit_ivs, i, explicit_iv, explicit_iv_len));
+                /* Record this IV */
+                memcpy(existing_explicit_ivs[i], explicit_iv, explicit_iv_len);
             }
 
             /* Copy the encrypted out data to the in data */
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5))
-            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)))
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, S2N_TLS_RECORD_HEADER_LENGTH));
+            EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)));
 
             /* Let's decrypt it */
             uint8_t content_type;
@@ -328,6 +386,8 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
         }
     }
+
+    EXPECT_SUCCESS(s2n_connection_free(conn));
 
     END_TEST();
 }

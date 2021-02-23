@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -25,27 +25,66 @@
 #include <stdio.h>
 #include <errno.h>
 #include <s2n.h>
+#include <error/s2n_errno.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 
 #include "crypto/s2n_rsa.h"
 #include "crypto/s2n_pkey.h"
 
+#define STDIO_BUFSIZE  10240
+
 void print_s2n_error(const char *app_error)
 {
-    fprintf(stderr, "%s: '%s' : '%s'\n", app_error, s2n_strerror(s2n_errno, "EN"),
+    fprintf(stderr, "[%d] %s: '%s' : '%s'\n", getpid(), app_error, s2n_strerror(s2n_errno, "EN"),
             s2n_strerror_debug(s2n_errno, "EN"));
 }
 
-int negotiate(struct s2n_connection *conn)
+/* Poll the given file descriptor for an event determined by the blocked status */
+static int wait_for_event(int fd, s2n_blocked_status blocked)
+{
+    struct pollfd reader = { .fd = fd, .events = 0 };
+
+    switch (blocked) {
+    case S2N_NOT_BLOCKED:
+        return S2N_SUCCESS;
+    case S2N_BLOCKED_ON_READ:
+        reader.events |= POLLIN;
+        break;
+    case S2N_BLOCKED_ON_WRITE:
+        reader.events |= POLLOUT;
+        break;
+    case S2N_BLOCKED_ON_APPLICATION_INPUT:
+        /* This case is not encountered by the s2nc/s2nd applications,
+         * but is detected for completeness */
+        return S2N_SUCCESS;
+    }
+
+    if (poll(&reader, 1, -1) < 0) {
+        fprintf(stderr, "Failed to poll connection: %s\n", strerror(errno));
+        S2N_ERROR_PRESERVE_ERRNO();
+    }
+
+    return S2N_SUCCESS;
+}
+
+int negotiate(struct s2n_connection *conn, int fd)
 {
     s2n_blocked_status blocked;
-    do {
-        if (s2n_negotiate(conn, &blocked) < 0) {
-            fprintf(stderr, "Failed to negotiate: '%s' %d\n", s2n_strerror(s2n_errno, "EN"), s2n_connection_get_alert(conn));
-            return -1;
+    while (s2n_negotiate(conn, &blocked) != S2N_SUCCESS) {
+        if (s2n_error_get_type(s2n_errno) != S2N_ERR_T_BLOCKED) {
+            fprintf(stderr, "Failed to negotiate: '%s'. %s\n",
+                    s2n_strerror(s2n_errno, "EN"),
+                    s2n_strerror_debug(s2n_errno, "EN"));
+            fprintf(stderr, "Alert: %d\n",
+                    s2n_connection_get_alert(conn));
+            S2N_ERROR_PRESERVE_ERRNO();
         }
-    } while (blocked);
+
+        if (wait_for_event(fd, blocked) != S2N_SUCCESS) {
+            S2N_ERROR_PRESERVE_ERRNO();
+        }
+    }
 
     /* Now that we've negotiated, print some parameters */
     int client_hello_version;
@@ -55,20 +94,21 @@ int negotiate(struct s2n_connection *conn)
 
     if ((client_hello_version = s2n_connection_get_client_hello_version(conn)) < 0) {
         fprintf(stderr, "Could not get client hello version\n");
-        return -1;
+        S2N_ERROR(S2N_ERR_CLIENT_HELLO_VERSION);
     }
     if ((client_protocol_version = s2n_connection_get_client_protocol_version(conn)) < 0) {
         fprintf(stderr, "Could not get client protocol version\n");
-        return -1;
+        S2N_ERROR(S2N_ERR_CLIENT_PROTOCOL_VERSION);
     }
     if ((server_protocol_version = s2n_connection_get_server_protocol_version(conn)) < 0) {
         fprintf(stderr, "Could not get server protocol version\n");
-        return -1;
+        S2N_ERROR(S2N_ERR_SERVER_PROTOCOL_VERSION);
     }
     if ((actual_protocol_version = s2n_connection_get_actual_protocol_version(conn)) < 0) {
         fprintf(stderr, "Could not get actual protocol version\n");
-        return -1;
+        S2N_ERROR(S2N_ERR_ACTUAL_PROTOCOL_VERSION);
     }
+    printf("CONNECTED:\n");
     printf("Client hello version: %d\n", client_hello_version);
     printf("Client protocol version: %d\n", client_protocol_version);
     printf("Server protocol version: %d\n", server_protocol_version);
@@ -83,6 +123,8 @@ int negotiate(struct s2n_connection *conn)
     }
 
     printf("Curve: %s\n", s2n_connection_get_curve(conn));
+    printf("KEM: %s\n", s2n_connection_get_kem_name(conn));
+    printf("KEM Group: %s\n", s2n_connection_get_kem_group_name(conn));
 
     uint32_t length;
     const uint8_t *status = s2n_connection_get_ocsp_response(conn, &length);
@@ -91,6 +133,9 @@ int negotiate(struct s2n_connection *conn)
     }
 
     printf("Cipher negotiated: %s\n", s2n_connection_get_cipher(conn));
+    if (s2n_connection_is_session_resumed(conn)) {
+        printf("Resumed session\n");
+    }
 
     return 0;
 }
@@ -104,73 +149,121 @@ int echo(struct s2n_connection *conn, int sockfd)
     readers[1].fd = STDIN_FILENO;
     readers[1].events = POLLIN;
 
+    /* Reset errno so that we can't inherit the errno == EINTR exit condition. */
+    errno = 0;
+
     /* Act as a simple proxy between stdin and the SSL connection */
     int p;
     s2n_blocked_status blocked;
-  POLL:
-    while ((p = poll(readers, 2, -1)) > 0) {
-        char buffer[10240];
-        int bytes_read, bytes_written;
+    do {
+        while ((p = poll(readers, 2, -1)) > 0) {
+            char buffer[STDIO_BUFSIZE];
+            ssize_t bytes_read = 0;
+            ssize_t bytes_written = 0;
 
-        if (readers[0].revents & POLLIN) {
-            do {
-                bytes_read = s2n_recv(conn, buffer, 10240, &blocked);
+            if (readers[0].revents & POLLIN) {
+                s2n_errno = S2N_ERR_T_OK;
+                bytes_read = s2n_recv(conn, buffer, STDIO_BUFSIZE, &blocked);
                 if (bytes_read == 0) {
-                    /* Connection has been closed */
-                    s2n_connection_wipe(conn);
                     return 0;
                 }
                 if (bytes_read < 0) {
+                    if (s2n_error_get_type(s2n_errno) == S2N_ERR_T_BLOCKED) {
+                        /* Wait until poll tells us data is ready */
+                        continue;
+                    }
+
                     fprintf(stderr, "Error reading from connection: '%s' %d\n", s2n_strerror(s2n_errno, "EN"), s2n_connection_get_alert(conn));
                     exit(1);
                 }
-                bytes_written = write(STDOUT_FILENO, buffer, bytes_read);
-                if (bytes_written <= 0) {
-                    fprintf(stderr, "Error writing to stdout\n");
-                    exit(1);
-                }
-            } while (blocked);
-        }
-        if (readers[1].revents & POLLIN) {
-            int bytes_available;
-            if (ioctl(STDIN_FILENO, FIONREAD, &bytes_available) < 0) {
-                bytes_available = 1;
-            }
-            if (bytes_available > sizeof(buffer)) {
-                bytes_available = sizeof(buffer);
+
+                char *buf_ptr = buffer;
+                do {
+                    bytes_written = write(STDOUT_FILENO, buf_ptr, bytes_read);
+                    if (bytes_written < 0) {
+                        fprintf(stderr, "Error writing to stdout\n");
+                        exit(1);
+                    }
+
+                    bytes_read -= bytes_written;
+                    buf_ptr += bytes_written;
+                } while (bytes_read > 0);
             }
 
-            /* Read as many bytes as we think we can */
-          READ:
-            bytes_read = read(STDIN_FILENO, buffer, bytes_available);
-            if (bytes_read < 0) {
-                if (errno == EINTR) {
-                    goto READ;
+            if (readers[1].revents & POLLIN) {
+                size_t bytes_available = 0;
+
+                if (ioctl(STDIN_FILENO, FIONREAD, &bytes_available) < 0) {
+                    bytes_available = 1;
                 }
-                fprintf(stderr, "Error reading from stdin\n");
-                exit(1);
+
+                do {
+                    /* We can only read as much data as we have space for. So it may
+                     * take a couple loops to empty stdin. */
+                    size_t bytes_to_read = bytes_available;
+                    if (bytes_available > sizeof(buffer)) {
+                        bytes_to_read = sizeof(buffer);
+                    }
+
+                    bytes_read = read(STDIN_FILENO, buffer, bytes_to_read);
+                    if (bytes_read < 0 && errno != EINTR){
+                        fprintf(stderr, "Error reading from stdin\n");
+                        exit(1);
+                    }
+                    if (bytes_read == 0) {
+                        fprintf(stderr, "Exiting on stdin EOF\n");
+                        return 0;
+                    }
+                    bytes_available -= bytes_read;
+
+                    /* We may not be able to write all the data we read in one shot, so
+                     * keep sending until we have cleared our buffer. */
+                    char *buf_ptr = buffer;
+                    do {
+                        s2n_errno = S2N_ERR_T_OK;
+                        bytes_written = s2n_send(conn, buf_ptr, bytes_read, &blocked);
+                        if (bytes_written < 0) {
+                            if (s2n_error_get_type(s2n_errno) != S2N_ERR_T_BLOCKED) {
+                                fprintf(stderr, "Error writing to connection: '%s'\n",
+                                        s2n_strerror(s2n_errno, "EN"));
+                                exit(1);
+                            }
+
+                            if (wait_for_event(sockfd, blocked) != S2N_SUCCESS) {
+                                S2N_ERROR_PRESERVE_ERRNO();
+                            }
+                        } else {
+                            // Only modify the counts if we successfully wrote the data
+                            bytes_read -= bytes_written;
+                            buf_ptr += bytes_written;
+                        }
+                    } while (bytes_read > 0);
+
+                } while (bytes_available || blocked);
+
             }
-            if (bytes_read == 0) {
-                /* Exit on EOF */
+
+            if (readers[1].revents & POLLHUP) {
+                /* The stdin pipe hanged up, and we've handled all read from it above */
                 return 0;
             }
 
-            char *buf_ptr = buffer;
-            do {
-                bytes_written = s2n_send(conn, buf_ptr, bytes_available, &blocked);
-                if (bytes_written < 0) {
-                    fprintf(stderr, "Error writing to connection: '%s'\n", s2n_strerror(s2n_errno, "EN"));
-                    exit(1);
-                }
+            if (readers[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                fprintf(stderr, "Error polling from socket: err=%d hup=%d nval=%d\n",
+                        (readers[0].revents & POLLERR ) ? 1 : 0,
+                        (readers[0].revents & POLLHUP ) ? 1 : 0,
+                        (readers[0].revents & POLLNVAL ) ? 1 : 0);
+                S2N_ERROR(S2N_ERR_POLLING_FROM_SOCKET);
+            }
 
-                bytes_available -= bytes_written;
-                buf_ptr += bytes_written;
-            } while (bytes_available || blocked);
+            if (readers[1].revents & (POLLERR | POLLNVAL)) {
+                fprintf(stderr, "Error polling from socket: err=%d nval=%d\n",
+                        (readers[1].revents & POLLERR ) ? 1 : 0,
+                        (readers[1].revents & POLLNVAL ) ? 1 : 0);
+                S2N_ERROR(S2N_ERR_POLLING_FROM_SOCKET);
+            }
         }
-    }
-    if (p < 0 && errno == EINTR) {
-        goto POLL;
-    }
+    } while (p < 0 && errno == EINTR);
 
     return 0;
 }

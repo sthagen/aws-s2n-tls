@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License").
 # You may not use this file except in compliance with the License.
@@ -18,15 +18,20 @@ OBJS=$(SRCS:.c=.o)
 CRYPTO_LDFLAGS = -L$(LIBCRYPTO_ROOT)/lib
 
 .PHONY : all
-all: libtests2n.so libtests2n.dylib
+all: libtests2n.a libtests2n.so libtests2n.dylib
 
 include ../../s2n.mk
 
-CFLAGS += -I../../ -I../../api/ -I$(LIBCRYPTO_ROOT)/include/
-LDFLAGS += -L../../lib/ ${CRYPTO_LDFLAGS} -lcrypto -lpthread -ls2n
+CFLAGS += -I../
+LIBS += ../../lib/libs2n.a
+LDFLAGS += ${CRYPTO_LDFLAGS} ${LIBS} ${CRYPTO_LIBS} -lm -ldl -lrt -pthread
 
 libtests2n.so: ${OBJS}
 	${CC} ${CFLAGS} -shared ${LDFLAGS} -o libtests2n.so ${OBJS}
 
 libtests2n.dylib: ${OBJS}
 	test ! -f /usr/lib/libSystem.dylib || libtool ${LDFLAGS} -dynamic -o libtests2n.dylib ${OBJS}
+
+libtests2n.a: ${OBJS}
+	$(AR) cru libtests2n.a ${OBJS}
+	$(RANLIB) libtests2n.a

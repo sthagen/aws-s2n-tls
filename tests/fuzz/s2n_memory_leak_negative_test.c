@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -133,22 +133,9 @@ static char dhparams[] =
 
 static int MAX_NEGOTIATION_ATTEMPTS = 10;
 
-int LLVMFuzzerInitialize(const uint8_t *buf, size_t len)
+int s2n_fuzz_test(const uint8_t *buf, size_t len)
 {
-#ifdef S2N_TEST_IN_FIPS_MODE
-    S2N_TEST_ENTER_FIPS_MODE();
-#endif
-
-    GUARD(s2n_init());
-    GUARD(setenv("S2N_ENABLE_CLIENT_MODE", "1", 0));
-    return 0;
-}
-
-int LLVMFuzzerTestOneInput(const uint8_t *buf, size_t len)
-{
-    if(len < S2N_TLS_RECORD_HEADER_LENGTH){
-        return 0;
-    }
+    S2N_FUZZ_ENSURE_MIN_LEN(len, S2N_TLS_RECORD_HEADER_LENGTH);
 
     /* Set up File Descriptors from client to server */
     int client_to_server[2];
@@ -176,8 +163,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *buf, size_t len)
     GUARD(s2n_connection_set_write_fd(server_conn, -1));
 
     /* Set up Client Connection */
+    struct s2n_config *client_config = s2n_config_new();
+    notnull_check(client_config);
+    s2n_config_disable_x509_verification(client_config);
+
     struct s2n_connection *client_conn;
     notnull_check(client_conn = s2n_connection_new(S2N_CLIENT));
+    GUARD(s2n_connection_set_config(client_conn, client_config));
     GUARD(s2n_connection_set_write_fd(client_conn, client_to_server[1]));
 
     /* Write data to client out file descriptor so that it is received by the server */
@@ -206,6 +198,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *buf, size_t len)
     GUARD(s2n_config_free(server_config));
     GUARD(s2n_connection_free(server_conn));
     GUARD(s2n_connection_free(client_conn));
+    GUARD(s2n_config_free(client_config));
 
-    return 0;
+    return S2N_SUCCESS;
 }
+
+S2N_FUZZ_TARGET(NULL, s2n_fuzz_test, NULL)

@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License").
 # You may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@
 all: s2nc s2nd
 include ../s2n.mk
 
-LDFLAGS += -L../lib/ -L${LIBCRYPTO_ROOT}/lib -ls2n ${LIBS} ${CRYPTO_LIBS}
+LDFLAGS += -L../lib/ -L${LIBCRYPTO_ROOT}/lib ../lib/libs2n.a ${CRYPTO_LIBS} ${LIBS}
 CRUFT += s2nc s2nd
 
 s2nc: s2nc.c echo.c
-	${CC} ${CFLAGS} s2nc.c echo.c  -o s2nc ${LDFLAGS}
+	${CC} ${CFLAGS} s2nc.c echo.c common.c -o s2nc ${LDFLAGS}
 
 s2nd: s2nd.c echo.c
-	${CC} ${CFLAGS} s2nd.c echo.c -o s2nd ${LDFLAGS}
+	${CC} ${CFLAGS} s2nd.c echo.c https.c common.c -o s2nd ${LDFLAGS}

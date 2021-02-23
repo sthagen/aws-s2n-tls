@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -40,16 +40,17 @@ int main(int argc, char **argv)
     char server_random_hex_in[] = "537eefc29f337c5eedacd00a1889b031261701872d666a74fa999dc13bcd8821";
     char master_secret_hex_in[] = "c8c610686237cd024a2d8e0391f61a8a4464c2c9576ea2b5ccf3af68139ec07c6a1720097063de968f2341f77b837120";
 
-    struct s2n_stuffer client_random_in;
-    struct s2n_stuffer server_random_in;
-    struct s2n_stuffer premaster_secret_in;
-    struct s2n_stuffer master_secret_hex_out;
+    struct s2n_stuffer client_random_in = {0};
+    struct s2n_stuffer server_random_in = {0};
+    struct s2n_stuffer premaster_secret_in = {0};
+    struct s2n_stuffer master_secret_hex_out = {0};
     struct s2n_blob master_secret = {.data = master_secret_hex_pad,.size = sizeof(master_secret_hex_pad) };
-    struct s2n_blob pms;
+    struct s2n_blob pms = {0};
 
-    struct s2n_connection *conn;
+    struct s2n_connection *conn = NULL;
 
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
 
     EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
 
@@ -64,24 +65,24 @@ int main(int argc, char **argv)
 
     /* Parse the hex */
     for (int i = 0; i < 48; i++) {
-        uint8_t c;
+        uint8_t c = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint8_hex(&premaster_secret_in, &c));
         conn->secure.rsa_premaster_secret[i] = c;
     }
     for (int i = 0; i < 32; i++) {
-        uint8_t c;
+        uint8_t c = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint8_hex(&client_random_in, &c));
         conn->secure.client_random[i] = c;
     }
     for (int i = 0; i < 32; i++) {
-        uint8_t c;
+        uint8_t c = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint8_hex(&server_random_in, &c));
         conn->secure.server_random[i] = c;
     }
 
     pms.data = conn->secure.rsa_premaster_secret;
     pms.size = sizeof(conn->secure.rsa_premaster_secret);
-    EXPECT_SUCCESS(s2n_prf_master_secret(conn, &pms));
+    EXPECT_SUCCESS(s2n_tls_prf_master_secret(conn, &pms));
 
     /* Convert the master secret to hex */
     for (int i = 0; i < 48; i++) {

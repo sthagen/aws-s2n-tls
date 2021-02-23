@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -20,3 +20,4 @@
 #include "utils/s2n_blob.h"
 
 extern int s2n_increment_sequence_number(struct s2n_blob *sequence_number);
+int s2n_sequence_number_to_uint64(struct s2n_blob *sequence_number, uint64_t *output);

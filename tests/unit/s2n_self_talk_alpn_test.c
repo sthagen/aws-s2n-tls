@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 #include <s2n.h>
 
+
+#include "utils/s2n_safety.h"
 #include "tls/s2n_connection.h"
 #include "tls/s2n_handshake.h"
 
@@ -57,12 +59,9 @@ int mock_client(int writefd, int readfd, const char **protocols, int count, cons
 
     client_conn = s2n_connection_new(S2N_CLIENT);
     client_config = s2n_config_new();
-    s2n_config_set_verify_cert_chain_cb(client_config, accept_all_rsa_certs, NULL);
     s2n_config_set_protocol_preferences(client_config, protocols, count);
+    s2n_config_disable_x509_verification(client_config);
     s2n_connection_set_config(client_conn, client_config);
-    client_conn->server_protocol_version = S2N_TLS12;
-    client_conn->client_protocol_version = S2N_TLS12;
-    client_conn->actual_protocol_version = S2N_TLS12;
 
     s2n_connection_set_read_fd(client_conn, readfd);
     s2n_connection_set_write_fd(client_conn, writefd);
@@ -86,16 +85,21 @@ int mock_client(int writefd, int readfd, const char **protocols, int count, cons
         
         s2n_send(client_conn, buffer, i, &blocked);
     }
-    
+
     int shutdown_rc= -1;
-    do {
-        shutdown_rc = s2n_shutdown(client_conn, &blocked);
-    } while(shutdown_rc != 0);
+    if(!result) {
+        do {
+            shutdown_rc = s2n_shutdown(client_conn, &blocked);
+        } while (shutdown_rc != 0);
+    }
 
     s2n_connection_free(client_conn);
+    s2n_config_free(client_config);
 
     /* Give the server a chance to a void a sigpipe */
     sleep(1);
+
+    s2n_cleanup();
 
     _exit(result);
 }
@@ -113,13 +117,14 @@ int main(int argc, char **argv)
     char *cert_chain_pem;
     char *private_key_pem;
     char *dhparams_pem;
+    struct s2n_cert_chain_and_key *chain_and_key;
 
-    const char *protocols[] = { "http/1.1", "spdy/3.1" };
+    const char *protocols[] = { "http/1.1", "spdy/3.1", "h2" };
+    const int protocols_size = s2n_array_len(protocols);
     const char *mismatch_protocols[] = { "spdy/2" };
 
     BEGIN_TEST();
 
-    EXPECT_SUCCESS(setenv("S2N_ENABLE_CLIENT_MODE", "1", 0));
     EXPECT_NOT_NULL(cert_chain_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
     EXPECT_NOT_NULL(private_key_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
     EXPECT_NOT_NULL(dhparams_pem = malloc(S2N_MAX_TEST_PEM_SIZE));
@@ -128,10 +133,13 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_CERT_CHAIN, cert_chain_pem, S2N_MAX_TEST_PEM_SIZE));
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_PRIVATE_KEY, private_key_pem, S2N_MAX_TEST_PEM_SIZE));
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_DHPARAMS, dhparams_pem, S2N_MAX_TEST_PEM_SIZE));
+    EXPECT_NOT_NULL(chain_and_key = s2n_cert_chain_and_key_new());
+    EXPECT_SUCCESS(s2n_cert_chain_and_key_load_pem(chain_and_key, cert_chain_pem, private_key_pem));
 
-    EXPECT_SUCCESS(s2n_config_set_protocol_preferences(config, protocols, 2));
-    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key(config, cert_chain_pem, private_key_pem));
+    EXPECT_SUCCESS(s2n_config_set_protocol_preferences(config, protocols, protocols_size));
+    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(config, chain_and_key));
     EXPECT_SUCCESS(s2n_config_add_dhparams(config, dhparams_pem));
+    EXPECT_SUCCESS(s2n_config_set_cipher_preferences(config, "default"));
 
     /** Test no client ALPN request */
     /* Create a pipe */
@@ -155,9 +163,6 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(close(server_to_client[0]));
 
     EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
-    conn->server_protocol_version = S2N_TLS12;
-    conn->client_protocol_version = S2N_TLS12;
-    conn->actual_protocol_version = S2N_TLS12;
 
     EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
@@ -167,6 +172,8 @@ int main(int argc, char **argv)
 
     /* Negotiate the handshake. */
     EXPECT_SUCCESS(s2n_negotiate(conn, &blocked));
+
+    EXPECT_EQUAL(s2n_connection_get_selected_cert(conn), chain_and_key);
 
     /* Expect NULL negotiated protocol */
     EXPECT_EQUAL(s2n_get_application_protocol(conn), NULL);
@@ -209,7 +216,7 @@ int main(int argc, char **argv)
 
         /* Clients ALPN preferences match our preferences, so we pick the
          * most preferred server one */
-        mock_client(client_to_server[1], server_to_client[0], protocols, 2, protocols[0]);
+        mock_client(client_to_server[1], server_to_client[0], protocols, protocols_size, protocols[0]);
     }
 
     /* This is the parent */
@@ -321,10 +328,6 @@ int main(int argc, char **argv)
     /* Create a pipe */
     EXPECT_SUCCESS(pipe(server_to_client));
     EXPECT_SUCCESS(pipe(client_to_server));
-    for (int i = 0; i < 2; i++) {
-        EXPECT_NOT_EQUAL(fcntl(server_to_client[i], F_SETFL, fcntl(server_to_client[i], F_GETFL) | O_NONBLOCK), -1);
-        EXPECT_NOT_EQUAL(fcntl(client_to_server[i], F_SETFL, fcntl(client_to_server[i], F_GETFL) | O_NONBLOCK), -1);
-    }
 
     /* Create a child process */
     pid = fork();
@@ -352,17 +355,8 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(s2n_connection_set_read_fd(conn, client_to_server[0]));
     EXPECT_SUCCESS(s2n_connection_set_write_fd(conn, server_to_client[1]));
 
-    /* s2n_negotiate will fail, which ordinarily would delay with a sleep. 
-     * Remove the sleep and fake the delay with a mock time routine */
-    EXPECT_SUCCESS(s2n_connection_set_blinding(conn, S2N_SELF_SERVICE_BLINDING));
-    EXPECT_SUCCESS(s2n_config_set_nanoseconds_since_epoch_callback(config, mock_nanoseconds_since_epoch, NULL));
-
     /* Negotiate the handshake. */
-    int negotiate_rc;
-    do {
-        negotiate_rc = s2n_negotiate(conn, &blocked);
-    } while(errno == EAGAIN && blocked);
-    EXPECT_TRUE(negotiate_rc == -1 && s2n_errno == S2N_ERR_NO_APPLICATION_PROTOCOL);
+    EXPECT_SUCCESS(s2n_negotiate(conn, &blocked));
 
     /* Expect NULL negotiated protocol */
     EXPECT_EQUAL(s2n_get_application_protocol(conn), NULL);
@@ -378,7 +372,55 @@ int main(int argc, char **argv)
     EXPECT_EQUAL(waitpid(-1, &status, 0), pid);
     EXPECT_NOT_EQUAL(status, 0);
 
+    /* Test a connection level application protocol */
+    /* Create a pipe */
+    EXPECT_SUCCESS(pipe(server_to_client));
+    EXPECT_SUCCESS(pipe(client_to_server));
+
+    /* Create a child process */
+    pid = fork();
+    if (pid == 0) {
+        /* This is the child process, close the read end of the pipe */
+        EXPECT_SUCCESS(close(client_to_server[0]));
+        EXPECT_SUCCESS(close(server_to_client[1]));
+
+        /* Client config support all protocols, expect http 2 after negotiation */
+        mock_client(client_to_server[1], server_to_client[0], protocols, protocols_size, protocols[2]);
+    }
+
+    /* This is the parent */
+    EXPECT_SUCCESS(close(client_to_server[1]));
+    EXPECT_SUCCESS(close(server_to_client[0]));
+
+    EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
+    conn->server_protocol_version = S2N_TLS12;
+    conn->client_protocol_version = S2N_TLS12;
+    conn->actual_protocol_version = S2N_TLS12;
+    EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
+
+    /* Set up the connection to read from the fd */
+    EXPECT_SUCCESS(s2n_connection_set_read_fd(conn, client_to_server[0]));
+    EXPECT_SUCCESS(s2n_connection_set_write_fd(conn, server_to_client[1]));
+
+    /* Override connection protocol to http 2 */
+    EXPECT_SUCCESS(s2n_connection_set_protocol_preferences(conn, &protocols[2], 1));
+    /* Negotiate the handshake. */
+    EXPECT_SUCCESS(s2n_negotiate(conn, &blocked));
+
+    EXPECT_STRING_EQUAL(s2n_get_application_protocol(conn), protocols[2]);
+    /* Negotiation failed. Free the connection without shutdown */
+    EXPECT_SUCCESS(s2n_connection_free(conn));
+
+    /* Close the pipes */
+    EXPECT_SUCCESS(close(client_to_server[0]));
+    EXPECT_SUCCESS(close(server_to_client[1]));
+
+    /* Clean up */
+    EXPECT_EQUAL(waitpid(-1, &status, 0), pid);
+    EXPECT_NOT_EQUAL(status, 0);
+
     EXPECT_SUCCESS(s2n_config_free(config));
+    EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
     free(cert_chain_pem);
     free(private_key_pem);
     free(dhparams_pem);

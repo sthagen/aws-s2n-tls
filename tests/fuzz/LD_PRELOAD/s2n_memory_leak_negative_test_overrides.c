@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * permissions and limitations under the License.
  */
 
+#include "api/s2n.h"
 #include "utils/s2n_blob.h"
 
 int s2n_free(struct s2n_blob *b)
@@ -20,5 +21,5 @@ int s2n_free(struct s2n_blob *b)
     /* This will cause large amounts of memory leaks. This should be caught by LibFuzzer as a negative fuzz test to
      * ensure that LibFuzzer will catch these memory leaks.
      */
-    return 0;
+    return S2N_SUCCESS;
 }

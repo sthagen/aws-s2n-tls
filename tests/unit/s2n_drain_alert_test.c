@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@
 int main(int argc, char **argv)
 {
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
     uint8_t client_hello_message[] = {
         /* Protocol version TLS 1.2 */
         0x03, 0x03,
@@ -86,36 +87,34 @@ int main(int argc, char **argv)
     struct s2n_connection *server_conn;
     struct s2n_config *server_config;
     s2n_blocked_status server_blocked;
-    int server_to_client[2];
-    int client_to_server[2];
     char *cert_chain = malloc(S2N_MAX_TEST_PEM_SIZE);
     char *private_key = malloc(S2N_MAX_TEST_PEM_SIZE);
+    struct s2n_cert_chain_and_key *chain_and_key;
 
-    signal(SIGPIPE, SIG_IGN);
-    EXPECT_SUCCESS(pipe(server_to_client));
-    EXPECT_SUCCESS(pipe(client_to_server));
+    struct s2n_test_io_pair io_pair;
+    EXPECT_SUCCESS(s2n_io_pair_init_non_blocking(&io_pair));
 
     EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
-    EXPECT_SUCCESS(s2n_connection_set_read_fd(server_conn, client_to_server[0]));
-    EXPECT_SUCCESS(s2n_connection_set_write_fd(server_conn, server_to_client[1]));
+    EXPECT_SUCCESS(s2n_connection_set_io_pair(server_conn, &io_pair));
 
     EXPECT_NOT_NULL(server_config = s2n_config_new());
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_CERT_CHAIN, cert_chain, S2N_MAX_TEST_PEM_SIZE));
     EXPECT_SUCCESS(s2n_read_test_pem(S2N_DEFAULT_TEST_PRIVATE_KEY, private_key, S2N_MAX_TEST_PEM_SIZE));
-    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key(server_config, cert_chain, private_key));
+    EXPECT_NOT_NULL(chain_and_key = s2n_cert_chain_and_key_new());
+    EXPECT_SUCCESS(s2n_cert_chain_and_key_load_pem(chain_and_key, cert_chain, private_key));
+    EXPECT_SUCCESS(s2n_config_add_cert_chain_and_key_to_store(server_config, chain_and_key));
     EXPECT_SUCCESS(s2n_connection_set_config(server_conn, server_config));
 
     /* Send the client hello */
-    EXPECT_EQUAL(write(client_to_server[1], record_header, sizeof(record_header)), sizeof(record_header));
-    EXPECT_EQUAL(write(client_to_server[1], message_header, sizeof(message_header)), sizeof(message_header));
-    EXPECT_EQUAL(write(client_to_server[1], client_hello_message, sizeof(client_hello_message)), sizeof(client_hello_message));
+    EXPECT_EQUAL(write(io_pair.client, record_header, sizeof(record_header)), sizeof(record_header));
+    EXPECT_EQUAL(write(io_pair.client, message_header, sizeof(message_header)), sizeof(message_header));
+    EXPECT_EQUAL(write(io_pair.client, client_hello_message, sizeof(client_hello_message)), sizeof(client_hello_message));
 
     /* Send an alert from client to server */
-    EXPECT_EQUAL(write(client_to_server[1], alert_record, sizeof(alert_record)), sizeof(alert_record));
+    EXPECT_EQUAL(write(io_pair.client, alert_record, sizeof(alert_record)), sizeof(alert_record));
 
     /* Close the client read/write end */
-    EXPECT_SUCCESS(close(server_to_client[0]));
-    EXPECT_SUCCESS(close(client_to_server[1]));
+    EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_CLIENT));
 
     /* Expect the server to fail due to an incoming alert. We should not fail due to an I/O error(EPIPE). */
     s2n_negotiate(server_conn, &server_blocked);
@@ -123,12 +122,12 @@ int main(int argc, char **argv)
     EXPECT_EQUAL(s2n_connection_get_alert(server_conn), INTERNAL_ERROR_ALERT_HEX);
 
     EXPECT_SUCCESS(s2n_connection_free(server_conn));
+    EXPECT_SUCCESS(s2n_cert_chain_and_key_free(chain_and_key));
     EXPECT_SUCCESS(s2n_config_free(server_config));
     free(cert_chain);
     free(private_key);
 
-    EXPECT_SUCCESS(close(server_to_client[1]));
-    EXPECT_SUCCESS(close(client_to_server[0]));
+    EXPECT_SUCCESS(s2n_io_pair_close_one_end(&io_pair, S2N_SERVER));
 
     END_TEST();
 }

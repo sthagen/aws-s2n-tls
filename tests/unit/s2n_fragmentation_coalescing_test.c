@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -158,11 +158,11 @@ uint8_t heartbeat_message[] = {
 };
 
 uint8_t warning_alert[] = {       /* warning: user cancelled */
-    0x02, 0x5a
+    0x01, 0x5a
 };
 
 uint8_t fatal_alert[] = {       /* Fatal: unexpected message */
-    0x01, 0x0a
+    0x02, 0x0a
 };
 
 extern message_type_t s2n_conn_get_current_message_type(struct s2n_connection *conn);
@@ -394,15 +394,25 @@ void interleaved_fragmented_warning_alert(int write_fd)
 int main(int argc, char **argv)
 {
     struct s2n_connection *conn;
+    struct s2n_config *config;
+
     s2n_blocked_status blocked;
     int status;
     pid_t pid;
     int p[2];
 
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
 
-    EXPECT_SUCCESS(setenv("S2N_ENABLE_CLIENT_MODE", "1", 0));
+    EXPECT_NOT_NULL(config = s2n_config_new());
+    EXPECT_SUCCESS(s2n_config_disable_x509_verification(config));
+    EXPECT_SUCCESS(s2n_config_set_check_stapled_ocsp_response(config, 0));
+    /* The server hello has TLS_RSA_WITH_AES_256_CBC_SHA256 hardcoded,
+       so we need to set a cipher preference that will accept that value */
+    EXPECT_SUCCESS(s2n_config_set_cipher_preferences(config, "20170328"));
     EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
+    EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
+
     conn->server_protocol_version = S2N_TLS12;
     conn->client_protocol_version = S2N_TLS12;
     conn->actual_protocol_version = S2N_TLS12;
@@ -425,6 +435,7 @@ int main(int argc, char **argv)
 
         /* Write the fragmented hello message */
         fragmented_message(p[1]);
+        EXPECT_SUCCESS(s2n_config_free(config));
         EXPECT_SUCCESS(s2n_connection_free(conn));
         _exit(0);
     }
@@ -471,6 +482,7 @@ int main(int argc, char **argv)
         /* Write the fragmented hello message */
         coalesced_message(p[1]);
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -516,6 +528,7 @@ int main(int argc, char **argv)
         /* Write the fragmented hello message */
         interleaved_message(p[1]);
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -561,6 +574,7 @@ int main(int argc, char **argv)
         /* Write the fragmented hello message */
         interleaved_fragmented_warning_alert(p[1]);
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -606,6 +620,7 @@ int main(int argc, char **argv)
         /* Write the fragmented hello message */
         interleaved_fragmented_fatal_alert(p[1]);
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -627,6 +642,7 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(close(p[0]));
 
     EXPECT_SUCCESS(s2n_connection_free(conn));
+    EXPECT_SUCCESS(s2n_config_free(config));
 
     END_TEST();
 }

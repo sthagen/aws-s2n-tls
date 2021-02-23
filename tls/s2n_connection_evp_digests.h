@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -37,9 +37,11 @@ struct s2n_connection_hash_handles {
     struct s2n_hash_evp_digest sha384;
     struct s2n_hash_evp_digest sha512;
     struct s2n_hash_evp_digest md5_sha1;
+    struct s2n_hash_evp_digest ccv_hash_copy;
     struct s2n_hash_evp_digest prf_md5_hash_copy;
     struct s2n_hash_evp_digest prf_sha1_hash_copy;
     struct s2n_hash_evp_digest prf_tls12_hash_copy;
+    struct s2n_hash_evp_digest server_finished_copy;
     struct s2n_hash_evp_digest prf_md5;
 
     /* SSLv3 PRF hash states */

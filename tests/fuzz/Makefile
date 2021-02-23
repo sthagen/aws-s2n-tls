@@ -1,5 +1,5 @@
 #
-# Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License").
 # You may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@ SRCS=$(wildcard *.c)
 OBJS=$(SRCS:.c=.o)
 TESTS=$(SRCS:.c=)
 CRYPTO_LDFLAGS = -L$(LIBCRYPTO_ROOT)/lib
+SHELL:=/bin/bash
+
 
 ifndef LIBFUZZER_ROOT
     export LIBFUZZER_ROOT = $(shell echo "../../fuzz_dependencies")
@@ -30,36 +32,45 @@ ifndef FUZZ_TESTS
     export FUZZ_TESTS=${TESTS}
 endif
 
-
 .PHONY : all
 all : run_tests
 
 include ../../s2n.mk
 
-CRUFT += $(wildcard *_test) $(wildcard fuzz-*.log) $(wildcard *_test_output.txt) $(wildcard LD_PRELOAD/*.so)
-LIBS += -lm
+CRUFT += $(wildcard *_test) $(wildcard fuzz-*.log) $(wildcard *_test_output.txt) $(wildcard *_test_results.txt) $(wildcard LD_PRELOAD/*.so) $(wildcard *.prof*)
 
-CFLAGS += -Wno-unreachable-code -O0 -I$(LIBCRYPTO_ROOT)/include/ -I../../ -I../../api/
-LDFLAGS += $(LIBFUZZER_ROOT)/lib/libFuzzer.a -lstdc++ -L../../lib/ ${CRYPTO_LDFLAGS} -L../testlib/ -ls2n ${LIBS} ${CRYPTO_LIBS}
+CFLAGS += -Wno-unreachable-code -O0 -I$(LIBCRYPTO_ROOT)/include/ -I../
+LIBS += -L../testlib/ -ltests2n -L../../lib/ -ls2n
+LDFLAGS += $(LIBFUZZER_ROOT)/lib/libFuzzer.a -lstdc++
+LDFLAGS += ${CRYPTO_LDFLAGS} ${LIBS} ${CRYPTO_LIBS} -lm -ldl -lrt -pthread
 
 DYLD_LIBRARY_PATH="../../lib/:../testlib/:$(LIBCRYPTO_ROOT)/lib:$$DYLD_LIBRARY_PATH"
 LD_LIBRARY_PATH="../../lib/:../testlib/:$(LIBCRYPTO_ROOT)/lib:$$LD_LIBRARY_PATH"
+
+ifdef AFL_FUZZ
+    ifneq ($(FUZZ_COVERAGE), true)
+        CFLAGS += $(LIBFUZZER_ROOT)/FuzzingEngine.a
+    endif
+endif
+
 
 ld-preload :
 	${MAKE} -C LD_PRELOAD
 
 $(TESTS)::
-	@${CC} ${CFLAGS} $@.c -o $@  ${LDFLAGS} > /dev/null
+	@${CC} ${CFLAGS} $@.c -o $@  ${LDFLAGS}
 
-run_tests:: $(TESTS) ld-preload
-	@( fail_count=0; for test_name in ${FUZZ_TESTS} ; do \
+run_tests:: $(FUZZ_TESTS) ld-preload
+	{ set -e; \
+	for test_name in ${FUZZ_TESTS} ; do \
 	export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}; \
 	export DYLD_LIBRARY_PATH=${DYLD_LIBRARY_PATH}; \
 	export LIBCRYPTO_ROOT=${LIBCRYPTO_ROOT}; \
-	./runFuzzTest.sh $${test_name} ${FUZZ_TIMEOUT_SEC} || fail_count=`expr $$fail_count + 1`; done; \
-	exit $${fail_count}; \
-	)
+	./runFuzzTest.sh $${test_name} ${FUZZ_TIMEOUT_SEC}; done; \
+	}
+	./calcTotalCov.sh
 
 .PHONY : clean
-clean:
+clean: decruft
 	${MAKE} -C LD_PRELOAD decruft
+	rm -rf profiles

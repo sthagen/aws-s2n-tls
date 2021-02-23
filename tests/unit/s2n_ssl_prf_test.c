@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -40,16 +40,17 @@ int main(int argc, char **argv)
     char server_random_hex_in[] = "537fb7fe649225c9f37904b24916452d51794b3b5735fc7e628b6090db52209f";
     char master_secret_hex_in[] = "02b811717e3aa29e6b0526d7e9ae2b74496d461564401f47498e9cdbdf54c8afa69c25a648b360de2004c74850e8f7db";
 
-    struct s2n_stuffer client_random_in;
-    struct s2n_stuffer server_random_in;
-    struct s2n_stuffer premaster_secret_in;
-    struct s2n_stuffer master_secret_hex_out;
+    struct s2n_stuffer client_random_in = {0};
+    struct s2n_stuffer server_random_in = {0};
+    struct s2n_stuffer premaster_secret_in = {0};
+    struct s2n_stuffer master_secret_hex_out = {0};
     struct s2n_blob master_secret = {.data = master_secret_hex_pad,.size = sizeof(master_secret_hex_pad) };
-    struct s2n_blob pms;
+    struct s2n_blob pms = {0};
 
-    struct s2n_connection *conn;
+    struct s2n_connection *conn = NULL;
 
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
 
     if (s2n_is_in_fips_mode()) {
         /* Skip when FIPS mode is set as FIPS mode does not support SSLv3 */
@@ -66,17 +67,17 @@ int main(int argc, char **argv)
 
     /* Parse the hex */
     for (int i = 0; i < 48; i++) {
-        uint8_t c;
+        uint8_t c = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint8_hex(&premaster_secret_in, &c));
         conn->secure.rsa_premaster_secret[i] = c;
     }
     for (int i = 0; i < 32; i++) {
-        uint8_t c;
+        uint8_t c = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint8_hex(&client_random_in, &c));
         conn->secure.client_random[i] = c;
     }
     for (int i = 0; i < 32; i++) {
-        uint8_t c;
+        uint8_t c = 0;
         EXPECT_SUCCESS(s2n_stuffer_read_uint8_hex(&server_random_in, &c));
         conn->secure.server_random[i] = c;
     }
@@ -85,7 +86,7 @@ int main(int argc, char **argv)
     conn->actual_protocol_version = S2N_SSLv3;
     pms.data = conn->secure.rsa_premaster_secret;
     pms.size = sizeof(conn->secure.rsa_premaster_secret);
-    EXPECT_SUCCESS(s2n_prf_master_secret(conn, &pms));
+    EXPECT_SUCCESS(s2n_tls_prf_master_secret(conn, &pms));
 
     /* Convert the master secret to hex */
     for (int i = 0; i < 48; i++) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -15,31 +15,13 @@
 
 #pragma once
 
-#if defined(__APPLE__) && defined(__MACH__)
-
-#define COMMON_DIGEST_FOR_OPENSSL
-#include <CommonCrypto/CommonDigest.h>
-#define SHA1 CC_SHA1
-#define SHA224 CC_SHA224
-#define SHA256 CC_SHA256
-#define SHA384 CC_SHA384
-#define SHA512 CC_SHA512
-
-#include <CommonCrypto/CommonHMAC.h>
-#define HMAC CCHmac
-
-#else
+#include <stdint.h>
+#include <stdbool.h>
 
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 
-#endif
-
 #include "crypto/s2n_evp.h"
-
-#include <openssl/evp.h>
-
-#include <stdint.h>
 
 #define S2N_MAX_DIGEST_LEN SHA512_DIGEST_LENGTH
 
@@ -83,6 +65,8 @@ struct s2n_hash_evp_digest {
 struct s2n_hash_state {
     const struct s2n_hash *hash_impl;
     s2n_hash_algorithm alg;
+    uint8_t is_ready_for_input;
+    uint64_t currently_in_hash;
     union {
         union s2n_hash_low_level_digest low_level;
         struct s2n_hash_evp_digest high_level;
@@ -93,7 +77,7 @@ struct s2n_hash_state {
  * either OpenSSL's low-level algorithm-specific API's or OpenSSL's EVP API's.
  */
 struct s2n_hash {
-    int (*new) (struct s2n_hash_state *state);
+    int (*alloc) (struct s2n_hash_state *state);
     int (*allow_md5_for_fips) (struct s2n_hash_state *state);
     int (*init) (struct s2n_hash_state *state, s2n_hash_algorithm alg);
     int (*update) (struct s2n_hash_state *state, const void *data, uint32_t size);
@@ -104,8 +88,11 @@ struct s2n_hash {
 };
 
 extern int s2n_hash_digest_size(s2n_hash_algorithm alg, uint8_t *out);
-extern int s2n_hash_is_available(s2n_hash_algorithm alg);
+extern int s2n_hash_block_size(s2n_hash_algorithm alg, uint64_t *block_size);
+extern bool s2n_hash_is_available(s2n_hash_algorithm alg);
+extern int s2n_hash_is_ready_for_input(struct s2n_hash_state *state);
 extern int s2n_hash_new(struct s2n_hash_state *state);
+S2N_RESULT s2n_hash_state_validate(struct s2n_hash_state *state);
 extern int s2n_hash_allow_md5_for_fips(struct s2n_hash_state *state);
 extern int s2n_hash_init(struct s2n_hash_state *state, s2n_hash_algorithm alg);
 extern int s2n_hash_update(struct s2n_hash_state *state, const void *data, uint32_t size);
@@ -113,3 +100,5 @@ extern int s2n_hash_digest(struct s2n_hash_state *state, void *out, uint32_t siz
 extern int s2n_hash_copy(struct s2n_hash_state *to, struct s2n_hash_state *from);
 extern int s2n_hash_reset(struct s2n_hash_state *state);
 extern int s2n_hash_free(struct s2n_hash_state *state);
+extern int s2n_hash_get_currently_in_hash_total(struct s2n_hash_state *state, uint64_t *out);
+extern int s2n_hash_const_time_get_currently_in_hash_block(struct s2n_hash_state *state, uint64_t *out);

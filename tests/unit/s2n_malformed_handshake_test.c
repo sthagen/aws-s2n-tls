@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -230,15 +230,20 @@ void send_messages(int write_fd, uint8_t *server_hello, uint32_t server_hello_le
 int main(int argc, char **argv)
 {
     struct s2n_connection *conn;
+    struct s2n_config *config;
     s2n_blocked_status blocked;
     int status;
     pid_t pid;
     int p[2];
 
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
 
-    EXPECT_SUCCESS(setenv("S2N_ENABLE_CLIENT_MODE", "1", 0));
     EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
+    EXPECT_NOT_NULL(config = s2n_config_new());
+    EXPECT_SUCCESS(s2n_config_disable_x509_verification(config));
+    EXPECT_SUCCESS(s2n_config_set_cipher_preferences(config, "test_all"));
+    EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
 
     /* Test a good certificate list */
 
@@ -266,6 +271,7 @@ int main(int argc, char **argv)
         send_messages(p[1], server_hello_message, sizeof(server_hello_message), good_certificate_list, sizeof(good_certificate_list));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -314,6 +320,7 @@ int main(int argc, char **argv)
         send_messages(p[1], server_hello_message, sizeof(server_hello_message), empty_certificate_list, sizeof(empty_certificate_list));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -362,6 +369,7 @@ int main(int argc, char **argv)
         send_messages(p[1], server_hello_message, sizeof(server_hello_message), empty_certificate, sizeof(empty_certificate));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -410,6 +418,7 @@ int main(int argc, char **argv)
         send_messages(p[1], server_hello_message, sizeof(server_hello_message), certificate_list_too_large, sizeof(certificate_list_too_large));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -458,6 +467,7 @@ int main(int argc, char **argv)
         send_messages(p[1], server_hello_message, sizeof(server_hello_message), certificate_too_large, sizeof(certificate_too_large));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -506,6 +516,7 @@ int main(int argc, char **argv)
         send_messages(p[1], server_hello_message, sizeof(server_hello_message), certificate_list_too_large, sizeof(certificate_list_too_large));
 
         EXPECT_SUCCESS(s2n_connection_free(conn));
+        EXPECT_SUCCESS(s2n_config_free(config));
         _exit(0);
     }
 
@@ -527,6 +538,8 @@ int main(int argc, char **argv)
     EXPECT_EQUAL(waitpid(pid, &status, 0), pid);
     EXPECT_EQUAL(status, 0);
     EXPECT_SUCCESS(close(p[0]));
+    EXPECT_SUCCESS(s2n_connection_free(conn));
+    EXPECT_SUCCESS(s2n_config_free(config));
 
     END_TEST();
 }

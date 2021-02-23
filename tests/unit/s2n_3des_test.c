@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -40,9 +40,10 @@ int main(int argc, char **argv)
     struct s2n_blob r = {.data = random_data, .size = sizeof(random_data)};
 
     BEGIN_TEST();
+    EXPECT_SUCCESS(s2n_disable_tls13());
 
     EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
-    EXPECT_SUCCESS(s2n_get_urandom_data(&r));
+    EXPECT_OK(s2n_get_public_random_data(&r));
 
     /* Peer and we are in sync */
     conn->server = &conn->secure;
@@ -58,18 +59,18 @@ int main(int argc, char **argv)
     EXPECT_SUCCESS(s2n_hmac_init(&conn->secure.server_record_mac, S2N_HMAC_SHA1, mac_key, sizeof(mac_key)));
     conn->actual_protocol_version = S2N_TLS11;
 
-    int max_aligned_fragment = S2N_DEFAULT_FRAGMENT_LENGTH - (S2N_DEFAULT_FRAGMENT_LENGTH % 8);
-    for (int i = 0; i <= max_aligned_fragment + 1; i++) {
+    for (int i = 0; i <= S2N_DEFAULT_FRAGMENT_LENGTH + 1; i++) {
         struct s2n_blob in = {.data = random_data,.size = i };
         int bytes_written;
 
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->out));
         EXPECT_SUCCESS(bytes_written = s2n_record_write(conn, TLS_APPLICATION_DATA, &in));
 
-        if (i < max_aligned_fragment - 20 - 8 - 1) {
+        if (i <= S2N_DEFAULT_FRAGMENT_LENGTH) {
             EXPECT_EQUAL(bytes_written, i);
         } else {
-            EXPECT_EQUAL(bytes_written, max_aligned_fragment - 20 - 8 - 1);
+            /* application data size of intended fragment size + 1 should only send max fragment */
+            EXPECT_EQUAL(bytes_written, S2N_DEFAULT_FRAGMENT_LENGTH);
         }
 
         uint16_t predicted_length = bytes_written + 1 + 20 + 8;
@@ -90,8 +91,8 @@ int main(int argc, char **argv)
         /* Copy the encrypted out data to the in data */
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->in));
         EXPECT_SUCCESS(s2n_stuffer_wipe(&conn->header_in));
-        EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5))
-        EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)))
+        EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->header_in, 5));
+        EXPECT_SUCCESS(s2n_stuffer_copy(&conn->out, &conn->in, s2n_stuffer_data_available(&conn->out)));
 
         /* Let's decrypt it */
         uint8_t content_type;

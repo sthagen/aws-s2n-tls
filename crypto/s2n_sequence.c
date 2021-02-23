@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -15,9 +15,13 @@
 
 #include "crypto/s2n_sequence.h"
 
+#include "tls/s2n_crypto.h"
+
 #include "error/s2n_errno.h"
 
 #include "utils/s2n_blob.h"
+
+#define SEQUENCE_NUMBER_POWER 8
 
 int s2n_increment_sequence_number(struct s2n_blob *sequence_number)
 {
@@ -31,12 +35,24 @@ int s2n_increment_sequence_number(struct s2n_blob *sequence_number)
          * renegotiate instead. We don't support renegotiation. Caller needs to create a new session.
          * This condition is very unlikely. It requires 2^64 - 1 records to be sent.
          */
-        if (i == 0) {
-            S2N_ERROR(S2N_ERR_RECORD_LIMIT);
-        }
+        S2N_ERROR_IF(i == 0, S2N_ERR_RECORD_LIMIT);
 
         /* seq[i] wrapped, so let it carry */
     }
 
     return 0;
+}
+
+int s2n_sequence_number_to_uint64(struct s2n_blob *sequence_number, uint64_t *output)
+{
+    notnull_check(sequence_number);
+
+    uint8_t shift = 0;
+    *output = 0;
+
+    for (int i = sequence_number->size - 1; i >= 0; i--) {
+        *output += ((uint64_t) sequence_number->data[i]) << shift;
+        shift += SEQUENCE_NUMBER_POWER;
+    }
+    return S2N_SUCCESS;
 }

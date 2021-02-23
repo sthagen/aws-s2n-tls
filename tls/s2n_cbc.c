@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -97,9 +97,7 @@ int s2n_verify_cbc(struct s2n_connection *conn, struct s2n_hmac_state *hmac, str
 
     GUARD(s2n_hmac_reset(copy));
 
-    if (mismatches) {
-        S2N_ERROR(S2N_ERR_CBC_VERIFY);
-    }
+    S2N_ERROR_IF(mismatches, S2N_ERR_CBC_VERIFY);
 
     return 0;
 }
