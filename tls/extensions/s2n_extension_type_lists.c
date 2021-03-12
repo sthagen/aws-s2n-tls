@@ -31,6 +31,7 @@
 #include "tls/extensions/s2n_client_supported_groups.h"
 #include "tls/extensions/s2n_client_pq_kem.h"
 #include "tls/extensions/s2n_client_psk.h"
+#include "tls/extensions/s2n_early_data_indication.h"
 #include "tls/extensions/s2n_psk_key_exchange_modes.h"
 #include "tls/extensions/s2n_client_renegotiation_info.h"
 #include "tls/extensions/s2n_ec_point_format.h"
@@ -65,6 +66,7 @@ static const s2n_extension_type *const client_hello_extensions[] = {
         &s2n_client_cookie_extension,
         &s2n_quic_transport_parameters_extension,
         &s2n_psk_key_exchange_modes_extension,
+        &s2n_client_early_data_indication_extension,
         &s2n_client_psk_extension /* MUST be last */
 };
 
@@ -109,6 +111,7 @@ static const s2n_extension_type *const encrypted_extensions[] = {
         &s2n_server_max_fragment_length_extension,
         &s2n_server_alpn_extension,
         &s2n_quic_transport_parameters_extension,
+        &s2n_server_early_data_indication_extension,
 };
 
 static const s2n_extension_type *const cert_req_extensions[] = {
@@ -135,8 +138,8 @@ static s2n_extension_type_list extension_lists[] = {
 
 int s2n_extension_type_list_get(s2n_extension_list_id list_type, s2n_extension_type_list **extension_list)
 {
-    notnull_check(extension_list);
-    lt_check(list_type, s2n_array_len(extension_lists));
+    POSIX_ENSURE_REF(extension_list);
+    POSIX_ENSURE_LT(list_type, s2n_array_len(extension_lists));
 
     *extension_list = &extension_lists[list_type];
     return S2N_SUCCESS;

@@ -246,6 +246,47 @@ int main(int argc, char **argv)
         EXPECT_BYTEARRAY_EQUAL(&expected_params, &params, sizeof(struct s2n_psk_parameters));
     }
 
+    /* Test s2n_psk_parameters_wipe_secrets */
+    {
+        /* Safety Check */
+        EXPECT_ERROR_WITH_ERRNO(s2n_psk_parameters_wipe_secrets(NULL), S2N_ERR_NULL);
+
+        uint8_t test_identity_data[] = "test identity data";
+        uint8_t test_secret_data[] = "test secret data";
+        struct s2n_psk_parameters params = { 0 };
+        EXPECT_OK(s2n_psk_parameters_init(&params));
+        params.binder_list_size = 1;
+        params.chosen_psk_wire_index = 1;
+
+        struct s2n_psk *chosen_psk = NULL;
+        EXPECT_OK(s2n_array_pushback(&params.psk_list, (void**) &chosen_psk));
+        EXPECT_OK(s2n_psk_init(chosen_psk, S2N_PSK_TYPE_EXTERNAL));
+        EXPECT_SUCCESS(s2n_psk_set_identity(chosen_psk, test_identity_data, sizeof(test_identity_data)));
+        EXPECT_SUCCESS(s2n_psk_set_secret(chosen_psk, test_secret_data, sizeof(test_secret_data)));
+        params.chosen_psk = chosen_psk;
+
+        struct s2n_psk *other_psk = NULL;
+        EXPECT_OK(s2n_array_pushback(&params.psk_list, (void**) &other_psk));
+        EXPECT_OK(s2n_psk_init(other_psk, S2N_PSK_TYPE_EXTERNAL));
+        EXPECT_SUCCESS(s2n_psk_set_identity(other_psk, test_identity_data, sizeof(test_identity_data)));
+        EXPECT_SUCCESS(s2n_psk_set_secret(other_psk, test_secret_data, sizeof(test_secret_data)));
+
+        EXPECT_OK(s2n_psk_parameters_wipe_secrets(&params));
+
+        /* Verify secrets are wiped */
+        for (size_t i = 0; i < params.psk_list.len; i++) {
+            struct s2n_psk *psk = NULL;
+            EXPECT_OK(s2n_array_get(&params.psk_list, i, (void**)&psk));
+            EXPECT_NOT_NULL(psk->identity.data);
+            EXPECT_NULL(psk->secret.data);
+            EXPECT_EQUAL(psk->secret.size, 0);
+            EXPECT_NULL(psk->early_secret.data);
+            EXPECT_EQUAL(psk->early_secret.size, 0);
+        }
+
+        EXPECT_OK(s2n_psk_parameters_wipe(&params));
+    }
+
     /* Test s2n_connection psk_parameters lifecycle.
      * This test mostly exists to check for memory leaks. */
     {
@@ -629,7 +670,7 @@ int main(int argc, char **argv)
 
             for (s2n_hmac_algorithm hmac_alg = S2N_HMAC_SHA1; hmac_alg <= S2N_HMAC_SHA384; hmac_alg++) {
                 uint8_t hash_size = 0;
-                GUARD(s2n_hmac_digest_size(hmac_alg, &hash_size));
+                POSIX_GUARD(s2n_hmac_digest_size(hmac_alg, &hash_size));
 
                 uint8_t binder_size = 0;
                 EXPECT_SUCCESS(s2n_stuffer_read_uint8(&out, &binder_size));

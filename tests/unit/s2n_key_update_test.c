@@ -121,7 +121,7 @@ int main(int argc, char **argv)
             EXPECT_NOT_NULL(server_conn = s2n_connection_new(S2N_SERVER));
             server_conn->actual_protocol_version = S2N_TLS13;
             server_conn->secure.cipher_suite = &s2n_tls13_aes_256_gcm_sha384;
-            memcpy_check(server_conn->secure.client_app_secret, application_secret.data, application_secret.size);
+            POSIX_CHECKED_MEMCPY(server_conn->secure.client_app_secret, application_secret.data, application_secret.size);
 
             server_conn->secure.client_sequence_number[0] = 1; 
             /* Write the key update request to the correct stuffer */
@@ -143,7 +143,7 @@ int main(int argc, char **argv)
             EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
             client_conn->actual_protocol_version = S2N_TLS13;
             client_conn->secure.cipher_suite = &s2n_tls13_aes_256_gcm_sha384;
-            memcpy_check(client_conn->secure.server_app_secret, application_secret.data, application_secret.size);
+            POSIX_CHECKED_MEMCPY(client_conn->secure.server_app_secret, application_secret.data, application_secret.size);
 
             client_conn->secure.server_sequence_number[0] = 1; 
             /* Write the key update request to the correct stuffer */
@@ -165,16 +165,24 @@ int main(int argc, char **argv)
             EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
             client_conn->actual_protocol_version = S2N_TLS13;
             client_conn->secure.cipher_suite = &s2n_tls13_aes_256_gcm_sha384;
-            memcpy_check(client_conn->secure.client_app_secret, application_secret.data, application_secret.size);
+            POSIX_CHECKED_MEMCPY(client_conn->secure.client_app_secret, application_secret.data, application_secret.size);
             uint8_t zeroed_sequence_number[S2N_TLS_SEQUENCE_NUM_LEN] = {0};
-   
+
+            /* Setup io */
+            struct s2n_stuffer stuffer;
+            EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
+            EXPECT_SUCCESS(s2n_connection_set_io_stuffers(&stuffer, &stuffer, client_conn));
+
             client_conn->key_update_pending = true;
 
-            EXPECT_SUCCESS(s2n_key_update_send(client_conn));
+            s2n_blocked_status blocked = 0;
+            EXPECT_SUCCESS(s2n_key_update_send(client_conn, &blocked));
 
             EXPECT_EQUAL(client_conn->key_update_pending, false);
             EXPECT_BYTEARRAY_EQUAL(client_conn->secure.client_sequence_number, zeroed_sequence_number, S2N_TLS_SEQUENCE_NUM_LEN);
+            EXPECT_TRUE(s2n_stuffer_data_available(&stuffer) > 0);
 
+            EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
         }
 
@@ -184,8 +192,13 @@ int main(int argc, char **argv)
             EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
             client_conn->actual_protocol_version = S2N_TLS13;
             client_conn->secure.cipher_suite = &s2n_tls13_aes_256_gcm_sha384;
-            memcpy_check(client_conn->secure.client_app_secret, application_secret.data, application_secret.size);
+            POSIX_CHECKED_MEMCPY(client_conn->secure.client_app_secret, application_secret.data, application_secret.size);
             uint8_t zeroed_sequence_number[S2N_TLS_SEQUENCE_NUM_LEN] = {0};
+
+            /* Setup io */
+            struct s2n_stuffer stuffer;
+            EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
+            EXPECT_SUCCESS(s2n_connection_set_io_stuffers(&stuffer, &stuffer, client_conn));
 
             client_conn->key_update_pending = false;
 
@@ -193,11 +206,14 @@ int main(int argc, char **argv)
                 client_conn->secure.client_sequence_number[i] = max_record_limit[i];
             }
             
-            EXPECT_SUCCESS(s2n_key_update_send(client_conn));
+            s2n_blocked_status blocked = 0;
+            EXPECT_SUCCESS(s2n_key_update_send(client_conn, &blocked));
 
             EXPECT_EQUAL(client_conn->key_update_pending, false);
             EXPECT_BYTEARRAY_EQUAL(client_conn->secure.client_sequence_number, zeroed_sequence_number, S2N_TLS_SEQUENCE_NUM_LEN);
-            
+            EXPECT_TRUE(s2n_stuffer_data_available(&stuffer) > 0);
+
+            EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
         } 
         /* Key update is not triggered */
@@ -206,18 +222,26 @@ int main(int argc, char **argv)
             EXPECT_NOT_NULL(client_conn = s2n_connection_new(S2N_CLIENT));
             client_conn->actual_protocol_version = S2N_TLS13;
             client_conn->secure.cipher_suite = &s2n_tls13_aes_256_gcm_sha384;
-            memcpy_check(client_conn->secure.client_app_secret, application_secret.data, application_secret.size);
+            POSIX_CHECKED_MEMCPY(client_conn->secure.client_app_secret, application_secret.data, application_secret.size);
             uint8_t expected_sequence_number[S2N_TLS_SEQUENCE_NUM_LEN] = {0};
+
+            /* Setup io */
+            struct s2n_stuffer stuffer;
+            EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&stuffer, 0));
+            EXPECT_SUCCESS(s2n_connection_set_io_stuffers(&stuffer, &stuffer, client_conn));
 
             client_conn->secure.client_sequence_number[S2N_TLS_SEQUENCE_NUM_LEN - 1] = 1; 
             expected_sequence_number[S2N_TLS_SEQUENCE_NUM_LEN - 1] = 1;
             client_conn->key_update_pending = false;
 
-            EXPECT_SUCCESS(s2n_key_update_send(client_conn));
+            s2n_blocked_status blocked = 0;
+            EXPECT_SUCCESS(s2n_key_update_send(client_conn, &blocked));
 
             EXPECT_EQUAL(client_conn->key_update_pending, false);
             EXPECT_BYTEARRAY_EQUAL(client_conn->secure.client_sequence_number, expected_sequence_number, S2N_TLS_SEQUENCE_NUM_LEN);
-            
+            EXPECT_TRUE(s2n_stuffer_data_available(&stuffer) == 0);
+
+            EXPECT_SUCCESS(s2n_stuffer_free(&stuffer));
             EXPECT_SUCCESS(s2n_connection_free(client_conn));
         } 
     }

@@ -169,7 +169,7 @@ void mock_client(struct s2n_test_io_pair *io_pair)
     }
 
     /* Make sure we did a full handshake */
-    if (!IS_FULL_HANDSHAKE(conn->handshake.handshake_type)) {
+    if (!IS_FULL_HANDSHAKE(conn)) {
         result = 2;
     }
 
@@ -226,7 +226,7 @@ void mock_client(struct s2n_test_io_pair *io_pair)
     }
 
     /* Make sure we did a abbreviated handshake */
-    if (!IS_RESUMPTION_HANDSHAKE(conn->handshake.handshake_type)) {
+    if (!IS_RESUMPTION_HANDSHAKE(conn)) {
         result = 11;
     }
 
@@ -353,8 +353,8 @@ int main(int argc, char **argv)
         /* Although we disable session ticket, as long as session cache
          * callbacks are binded, session ticket key storage would be initialized
          */
-        GUARD(s2n_config_set_session_cache_onoff(config, 1));
-        GUARD(config->wall_clock(config->sys_clock_ctx, &now));
+        POSIX_GUARD(s2n_config_set_session_cache_onoff(config, 1));
+        POSIX_GUARD(config->wall_clock(config->sys_clock_ctx, &now));
         EXPECT_SUCCESS(s2n_config_add_ticket_crypto_key(config, ticket_key_name, strlen((char*)ticket_key_name), ticket_key, sizeof(ticket_key), now/ONE_SEC_IN_NANOS));
 
         EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
@@ -378,7 +378,7 @@ int main(int argc, char **argv)
         EXPECT_EQUAL(s2n_connection_get_session_id(conn, session_id_from_server, MAX_KEY_LEN), s2n_connection_get_session_id_length(conn));
 
         /* Make sure we did a full TLS1.2 handshake */
-        EXPECT_TRUE(IS_FULL_HANDSHAKE(conn->handshake.handshake_type));
+        EXPECT_TRUE(IS_FULL_HANDSHAKE(conn));
         EXPECT_EQUAL(conn->actual_protocol_version, S2N_TLS12);
 
         /* Ensure the message was delivered */
@@ -421,7 +421,7 @@ int main(int argc, char **argv)
         EXPECT_EQUAL(0, memcmp(session_id_from_client, session_id_from_server, MAX_KEY_LEN));
 
         /* Make sure we did a abbreviated handshake */
-        EXPECT_TRUE(IS_RESUMPTION_HANDSHAKE(conn->handshake.handshake_type));
+        EXPECT_TRUE(IS_RESUMPTION_HANDSHAKE(conn));
 
         /* Ensure the message was delivered */
         memset(buffer, 0, sizeof(buffer));

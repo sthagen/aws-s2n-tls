@@ -251,6 +251,7 @@ static const char *no_such_error = "Internal s2n error";
     ERR_ENTRY(S2N_ERR_REENTRANCY, "Original execution must complete before method can be called again") \
     ERR_ENTRY(S2N_ERR_INVALID_CERT_STATE, "Certificate validation entered an invalid state and is not able to continue") \
     ERR_ENTRY(S2N_ERR_INVALID_EARLY_DATA_STATE, "Early data in invalid state") \
+    ERR_ENTRY(S2N_ERR_EARLY_DATA_NOT_ALLOWED, "Early data is not allowed by the connection") \
 
 /* clang-format on */
 
@@ -371,7 +372,7 @@ int s2n_calculate_stacktrace(void)
     }
 
     int old_errno = errno;
-    GUARD(s2n_free_stacktrace());
+    POSIX_GUARD(s2n_free_stacktrace());
     void *array[MAX_BACKTRACE_DEPTH];
     tl_stacktrace.trace_size = backtrace(array, MAX_BACKTRACE_DEPTH);
     tl_stacktrace.trace = backtrace_symbols(array, tl_stacktrace.trace_size);
