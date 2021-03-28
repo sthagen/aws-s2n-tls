@@ -248,6 +248,7 @@ struct s2n_connection {
     /* Keep some accounting on each connection */
     uint64_t wire_bytes_in;
     uint64_t wire_bytes_out;
+    uint64_t early_data_bytes;
 
     /* Is the connection open or closed ? We use C's only
      * atomic type as both the reader and the writer threads
@@ -319,6 +320,15 @@ struct s2n_connection {
     /* Key update data */
     unsigned key_update_pending:1;
 
+    /* Early data supported by caller.
+     * If a caller does not use any APIs that support early data,
+     * do not negotiate early data.
+     */
+    unsigned early_data_expected:1;
+
+    /* Connection overrides server_max_early_data_size */
+    unsigned server_max_early_data_size_overridden:1;
+
     /* Bitmap to represent preferred list of keyshare for client to generate and send keyshares in the ClientHello message.
      * The least significant bit (lsb), if set, indicates that the client must send an empty keyshare list.
      * Each bit value in the bitmap indiciates the corresponding curve in the ecc_preferences list for which a key share needs to be generated.
@@ -337,6 +347,7 @@ struct s2n_connection {
     uint16_t tickets_sent;
 
     s2n_early_data_state early_data_state;
+    uint32_t server_max_early_data_size;
 };
 
 int s2n_connection_is_managed_corked(const struct s2n_connection *s2n_connection);
@@ -360,6 +371,7 @@ int s2n_connection_get_protocol_preferences(struct s2n_connection *conn, struct 
 int s2n_connection_set_client_auth_type(struct s2n_connection *conn, s2n_cert_auth_type cert_auth_type);
 int s2n_connection_get_client_auth_type(struct s2n_connection *conn, s2n_cert_auth_type *client_cert_auth_type);
 int s2n_connection_get_client_cert_chain(struct s2n_connection *conn, uint8_t **der_cert_chain_out, uint32_t *cert_chain_len);
+int s2n_connection_get_peer_cert_chain(const struct s2n_connection *conn, struct s2n_cert_chain_and_key *cert_chain_and_key);
 uint8_t s2n_connection_get_protocol_version(const struct s2n_connection *conn);
 /* `none` keyword represents a list of empty keyshares */
 int s2n_connection_set_keyshare_by_name_for_testing(struct s2n_connection *conn, const char* curve_name);

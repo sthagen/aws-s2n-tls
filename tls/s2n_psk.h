@@ -40,7 +40,8 @@ struct s2n_psk {
     struct s2n_blob identity;
     struct s2n_blob secret;
     s2n_hmac_algorithm hmac_alg;
-    uint32_t obfuscated_ticket_age;
+    uint32_t ticket_age_add;
+    uint64_t ticket_issue_time;
     struct s2n_blob early_secret;
     struct s2n_early_data_config early_data_config;
 };
@@ -82,7 +83,6 @@ int s2n_psk_verify_binder(struct s2n_connection *conn, struct s2n_psk *psk,
 /* Public Interface -- will be made visible and moved to s2n.h when the PSK feature is released */
 
 typedef enum {
-    S2N_PSK_HMAC_SHA224 = 0,
     S2N_PSK_HMAC_SHA256,
     S2N_PSK_HMAC_SHA384,
 } s2n_psk_hmac;
