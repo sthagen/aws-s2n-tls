@@ -28,6 +28,7 @@ static S2N_RESULT s2n_get_test_client_and_server(struct s2n_connection **client_
     RESULT_ENSURE_REF(*client_conn);
 
     *server_conn = s2n_connection_new(S2N_SERVER);
+    RESULT_GUARD_POSIX(s2n_connection_set_blinding(*server_conn, S2N_SELF_SERVICE_BLINDING));
     RESULT_ENSURE_REF(*server_conn);
 
     RESULT_GUARD_POSIX(s2n_connection_set_config(*client_conn, config));
@@ -170,6 +171,7 @@ int main()
             EXPECT_EQUAL(s2n_conn_get_current_message_type(client_conn), END_OF_EARLY_DATA);
             EXPECT_EQUAL(s2n_conn_get_current_message_type(server_conn), END_OF_EARLY_DATA);
 
+            EXPECT_SUCCESS(s2n_connection_set_end_of_early_data(client_conn));
             EXPECT_SUCCESS(s2n_negotiate_test_server_and_client(server_conn, client_conn));
             EXPECT_EQUAL(s2n_conn_get_current_message_type(client_conn), APPLICATION_DATA);
             EXPECT_EQUAL(s2n_conn_get_current_message_type(server_conn), APPLICATION_DATA);

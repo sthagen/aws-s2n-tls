@@ -280,8 +280,15 @@ S2N_API
 extern void *s2n_connection_get_ctx(struct s2n_connection *conn);
 
 typedef int s2n_client_hello_fn(struct s2n_connection *conn, void *ctx);
+typedef enum { S2N_CLIENT_HELLO_CB_BLOCKING, S2N_CLIENT_HELLO_CB_NONBLOCKING } s2n_client_hello_cb_mode;
 S2N_API
 extern int s2n_config_set_client_hello_cb(struct s2n_config *config, s2n_client_hello_fn client_hello_callback, void *ctx);
+S2N_API
+extern int s2n_config_set_client_hello_cb_mode(struct s2n_config *config, s2n_client_hello_cb_mode cb_mode);
+S2N_API
+extern int s2n_client_hello_cb_done(struct s2n_connection *conn);
+S2N_API
+extern int s2n_connection_server_name_extension_used(struct s2n_connection *conn);
 
 struct s2n_client_hello;
 S2N_API
@@ -368,7 +375,13 @@ extern const uint8_t *s2n_connection_get_ocsp_response(struct s2n_connection *co
 S2N_API
 extern const uint8_t *s2n_connection_get_sct_list(struct s2n_connection *conn, uint32_t *length);
 
-typedef enum { S2N_NOT_BLOCKED = 0, S2N_BLOCKED_ON_READ, S2N_BLOCKED_ON_WRITE, S2N_BLOCKED_ON_APPLICATION_INPUT } s2n_blocked_status;
+typedef enum {
+    S2N_NOT_BLOCKED = 0,
+    S2N_BLOCKED_ON_READ,
+    S2N_BLOCKED_ON_WRITE,
+    S2N_BLOCKED_ON_APPLICATION_INPUT,
+    S2N_BLOCKED_ON_EARLY_DATA,
+} s2n_blocked_status;
 S2N_API
 extern int s2n_negotiate(struct s2n_connection *conn, s2n_blocked_status *blocked);
 S2N_API

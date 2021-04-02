@@ -366,8 +366,18 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             SERVER_HELLO
     },
 
+    [INITIAL | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            SERVER_HELLO
+    },
+
     [INITIAL | HELLO_RETRY_REQUEST] = {
             CLIENT_HELLO,
+            HELLO_RETRY_MSG
+    },
+
+    [INITIAL | HELLO_RETRY_REQUEST | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
             HELLO_RETRY_MSG
     },
 
@@ -392,10 +402,24 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             APPLICATION_DATA
     },
 
+    [NEGOTIATED | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC, ENCRYPTED_EXTENSIONS, SERVER_FINISHED,
+            CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
     [NEGOTIATED | MIDDLEBOX_COMPAT | WITH_EARLY_DATA] = {
             CLIENT_HELLO,
             SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC, ENCRYPTED_EXTENSIONS, SERVER_FINISHED,
             CLIENT_CHANGE_CIPHER_SPEC, END_OF_EARLY_DATA, CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
+    [NEGOTIATED | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS | WITH_EARLY_DATA] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC, ENCRYPTED_EXTENSIONS, SERVER_FINISHED,
+            END_OF_EARLY_DATA, CLIENT_FINISHED,
             APPLICATION_DATA
     },
 
@@ -417,6 +441,15 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             APPLICATION_DATA
     },
 
+    [NEGOTIATED | HELLO_RETRY_REQUEST | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            HELLO_RETRY_MSG, SERVER_CHANGE_CIPHER_SPEC,
+            CLIENT_HELLO,
+            SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_FINISHED,
+            CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
     [NEGOTIATED | FULL_HANDSHAKE] = {
             CLIENT_HELLO,
             SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
@@ -428,6 +461,13 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             CLIENT_HELLO,
             SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC, ENCRYPTED_EXTENSIONS, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
             CLIENT_CHANGE_CIPHER_SPEC, CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
+    [NEGOTIATED | FULL_HANDSHAKE | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC, ENCRYPTED_EXTENSIONS, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
+            CLIENT_FINISHED,
             APPLICATION_DATA
     },
 
@@ -444,6 +484,15 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             CLIENT_HELLO,
             HELLO_RETRY_MSG, SERVER_CHANGE_CIPHER_SPEC,
             CLIENT_CHANGE_CIPHER_SPEC, CLIENT_HELLO,
+            SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
+            CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
+    [NEGOTIATED | FULL_HANDSHAKE | HELLO_RETRY_REQUEST | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            HELLO_RETRY_MSG, SERVER_CHANGE_CIPHER_SPEC,
+            CLIENT_HELLO,
             SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
             CLIENT_FINISHED,
             APPLICATION_DATA
@@ -467,6 +516,15 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             APPLICATION_DATA
     },
 
+    [NEGOTIATED | FULL_HANDSHAKE | HELLO_RETRY_REQUEST | CLIENT_AUTH | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            HELLO_RETRY_MSG, SERVER_CHANGE_CIPHER_SPEC,
+            CLIENT_HELLO,
+            SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_CERT_REQ, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
+            CLIENT_CERT, CLIENT_CERT_VERIFY, CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
     [NEGOTIATED | FULL_HANDSHAKE | HELLO_RETRY_REQUEST | CLIENT_AUTH | NO_CLIENT_CERT] = {
             CLIENT_HELLO,
             HELLO_RETRY_MSG,
@@ -480,6 +538,15 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             CLIENT_HELLO,
             HELLO_RETRY_MSG, SERVER_CHANGE_CIPHER_SPEC,
             CLIENT_CHANGE_CIPHER_SPEC, CLIENT_HELLO,
+            SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_CERT_REQ, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
+            CLIENT_CERT, CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
+    [NEGOTIATED | FULL_HANDSHAKE | HELLO_RETRY_REQUEST | CLIENT_AUTH | NO_CLIENT_CERT | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            HELLO_RETRY_MSG, SERVER_CHANGE_CIPHER_SPEC,
+            CLIENT_HELLO,
             SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_CERT_REQ, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
             CLIENT_CERT, CLIENT_FINISHED,
             APPLICATION_DATA
@@ -499,6 +566,13 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             APPLICATION_DATA
     },
 
+    [NEGOTIATED | FULL_HANDSHAKE | CLIENT_AUTH | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC, ENCRYPTED_EXTENSIONS, SERVER_CERT_REQ, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
+            CLIENT_CERT, CLIENT_CERT_VERIFY, CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
+
     [NEGOTIATED | FULL_HANDSHAKE | CLIENT_AUTH | NO_CLIENT_CERT] = {
             CLIENT_HELLO,
             SERVER_HELLO, ENCRYPTED_EXTENSIONS, SERVER_CERT_REQ, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
@@ -512,10 +586,17 @@ static message_type_t tls13_handshakes[S2N_HANDSHAKES_COUNT][S2N_MAX_HANDSHAKE_L
             CLIENT_CHANGE_CIPHER_SPEC, CLIENT_CERT, CLIENT_FINISHED,
             APPLICATION_DATA
     },
+
+    [NEGOTIATED | FULL_HANDSHAKE | CLIENT_AUTH | NO_CLIENT_CERT | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS] = {
+            CLIENT_HELLO, CLIENT_CHANGE_CIPHER_SPEC,
+            SERVER_HELLO, SERVER_CHANGE_CIPHER_SPEC, ENCRYPTED_EXTENSIONS, SERVER_CERT_REQ, SERVER_CERT, SERVER_CERT_VERIFY, SERVER_FINISHED,
+            CLIENT_CERT, CLIENT_FINISHED,
+            APPLICATION_DATA
+    },
 };
 /* clang-format on */
 
-#define MAX_HANDSHAKE_TYPE_LEN 115
+#define MAX_HANDSHAKE_TYPE_LEN 123
 static char handshake_type_str[S2N_HANDSHAKES_COUNT][MAX_HANDSHAKE_TYPE_LEN] = {0};
 
 static const char* tls12_handshake_type_names[] = {
@@ -535,7 +616,8 @@ static const char* tls13_handshake_type_names[] = {
     "NO_CLIENT_CERT|",
     "HELLO_RETRY_REQUEST|",
     "MIDDLEBOX_COMPAT|",
-    "WITH_EARLY_DATA|"
+    "WITH_EARLY_DATA|",
+    "EARLY_CLIENT_CCS|",
 };
 
 #define IS_TLS13_HANDSHAKE( conn )    ((conn)->actual_protocol_version == S2N_TLS13)
@@ -662,11 +744,12 @@ bool s2n_is_hello_retry_handshake(struct s2n_connection *conn)
 static S2N_RESULT s2n_conn_set_tls13_handshake_type(struct s2n_connection *conn) {
     RESULT_ENSURE_REF(conn);
 
-    bool is_hello_retry = IS_HELLO_RETRY_HANDSHAKE(conn);
-    RESULT_GUARD(s2n_handshake_type_reset(conn));
-    if (is_hello_retry) {
-        RESULT_GUARD(s2n_handshake_type_set_tls13_flag(conn, HELLO_RETRY_REQUEST));
-    }
+    /* Most handshake type flags should be reset before we calculate the handshake type,
+     * in order to handle changes during retries.
+     * However, flags that have already affected the message order must be kept to avoid
+     * rewriting the past.
+     */
+    conn->handshake.handshake_type &= (HELLO_RETRY_REQUEST | MIDDLEBOX_COMPAT | EARLY_CLIENT_CCS);
 
     /* A handshake type has been negotiated */
     RESULT_GUARD(s2n_handshake_type_set_flag(conn, NEGOTIATED));
@@ -692,9 +775,7 @@ static S2N_RESULT s2n_conn_set_tls13_handshake_type(struct s2n_connection *conn)
         RESULT_GUARD(s2n_handshake_type_set_flag(conn, CLIENT_AUTH));
     }
 
-    /* Use middlebox compatibility mode for TLS1.3 by default.
-    * For now, only disable it when QUIC support is enabled. */
-    if (!conn->config->quic_enabled) {
+    if (s2n_is_middlebox_compat_enabled(conn)) {
         RESULT_GUARD(s2n_handshake_type_set_tls13_flag(conn, MIDDLEBOX_COMPAT));
     }
 
@@ -1086,6 +1167,8 @@ static int s2n_handshake_read_io(struct s2n_connection *conn)
         if ((r < 0) && (s2n_errno == S2N_ERR_DECRYPT) /* Decryption Error */
                 && (conn->mode == S2N_SERVER) /* On the server */
                 && (conn->early_data_state == S2N_EARLY_DATA_REJECTED) /* When early data was rejected */) {
+            POSIX_GUARD(s2n_stuffer_reread(&conn->in));
+            POSIX_GUARD_RESULT(s2n_early_data_record_bytes(conn, s2n_stuffer_data_available(&conn->in)));
             POSIX_GUARD_RESULT(s2n_wipe_record(conn));
             return S2N_SUCCESS;
         }
@@ -1100,8 +1183,12 @@ static int s2n_handshake_read_io(struct s2n_connection *conn)
     /* Now we have a record, but it could be a partial fragment of a message, or it might
      * contain several messages.
      */
-    S2N_ERROR_IF(record_type == TLS_APPLICATION_DATA, S2N_ERR_BAD_MESSAGE);
-    if (record_type == TLS_CHANGE_CIPHER_SPEC) {
+
+    if (record_type == TLS_APPLICATION_DATA) {
+        POSIX_ENSURE(conn->early_data_expected, S2N_ERR_BAD_MESSAGE);
+        POSIX_GUARD_RESULT(s2n_early_data_validate_recv(conn));
+        POSIX_BAIL(S2N_ERR_EARLY_DATA_BLOCKED);
+    } else if (record_type == TLS_CHANGE_CIPHER_SPEC) {
         /* TLS1.3 can receive unexpected CCS messages at any point in the handshake
          * due to a peer operating in middlebox compatibility mode.
          * However, when operating in QUIC mode, S2N should not accept ANY CCS messages,
@@ -1310,6 +1397,8 @@ int s2n_negotiate(struct s2n_connection *conn, s2n_blocked_status *blocked)
 
                 if (s2n_errno == S2N_ERR_ASYNC_BLOCKED) {
                     *blocked = S2N_BLOCKED_ON_APPLICATION_INPUT;
+                } else if (s2n_errno == S2N_ERR_EARLY_DATA_BLOCKED) {
+                    *blocked = S2N_BLOCKED_ON_EARLY_DATA;
                 }
 
                 S2N_ERROR_PRESERVE_ERRNO();
@@ -1327,6 +1416,8 @@ int s2n_negotiate(struct s2n_connection *conn, s2n_blocked_status *blocked)
 
                 if (s2n_errno == S2N_ERR_ASYNC_BLOCKED) {
                     *blocked = S2N_BLOCKED_ON_APPLICATION_INPUT;
+                } else if (s2n_errno == S2N_ERR_EARLY_DATA_BLOCKED) {
+                    *blocked = S2N_BLOCKED_ON_EARLY_DATA;
                 }
 
                 S2N_ERROR_PRESERVE_ERRNO();
