@@ -86,6 +86,46 @@ bool s2n_client_psk_should_send(struct s2n_connection *conn)
     return false;
 }
 
+/**
+ *= https://tools.ietf.org/rfc/rfc8446#section-4.2.11.1
+ *# The "obfuscated_ticket_age"
+ *# field of each PskIdentity contains an obfuscated version of the
+ *# ticket age formed by taking the age in milliseconds and adding the
+ *# "ticket_age_add" value that was included with the ticket (see
+ *# Section 4.6.1), modulo 2^32.
+*/
+static S2N_RESULT s2n_generate_obfuscated_ticket_age(struct s2n_psk *psk, uint64_t current_time, uint32_t *output)
+{
+    ENSURE_REF(psk);
+    ENSURE_MUT(output);
+
+    /**
+     *= https://tools.ietf.org/rfc/rfc8446#section-4.2.11
+     *# For identities
+     *# established externally, an obfuscated_ticket_age of 0 SHOULD be
+     *# used,
+     **/
+    if (psk->type == S2N_PSK_TYPE_EXTERNAL) {
+        *output = 0;
+        return S2N_RESULT_OK;
+    }
+
+    RESULT_ENSURE(current_time >= psk->ticket_issue_time, S2N_ERR_SAFETY);
+
+    /* Calculate ticket age */
+    uint64_t ticket_age_in_nanos = current_time - psk->ticket_issue_time;
+
+    /* Convert ticket age to milliseconds */
+    uint64_t ticket_age_in_millis = ticket_age_in_nanos / ONE_MILLISEC_IN_NANOS;
+    RESULT_ENSURE(ticket_age_in_millis <= UINT32_MAX, S2N_ERR_SAFETY);
+
+    /* Add the ticket_age_add value to the ticket age in milliseconds. The resulting uint32_t value
+     * will wrap, resulting in the modulo 2^32 operation. */
+    *output = ticket_age_in_millis + psk->ticket_age_add;
+
+    return S2N_RESULT_OK;
+}
+
 static int s2n_client_psk_send(struct s2n_connection *conn, struct s2n_stuffer *out)
 {
     POSIX_ENSURE_REF(conn);
@@ -116,7 +156,13 @@ static int s2n_client_psk_send(struct s2n_connection *conn, struct s2n_stuffer *
         /* Write the identity */
         POSIX_GUARD(s2n_stuffer_write_uint16(out, psk->identity.size));
         POSIX_GUARD(s2n_stuffer_write(out, &psk->identity));
-        POSIX_GUARD(s2n_stuffer_write_uint32(out, 0));
+        
+        /* Write obfuscated ticket age */
+        uint32_t obfuscated_ticket_age = 0;
+        uint64_t current_time = 0;
+        POSIX_GUARD(conn->config->wall_clock(conn->config->sys_clock_ctx, &current_time));
+        POSIX_GUARD_RESULT(s2n_generate_obfuscated_ticket_age(psk, current_time, &obfuscated_ticket_age));
+        POSIX_GUARD(s2n_stuffer_write_uint32(out, obfuscated_ticket_age));
 
         /* Calculate binder size */
         uint8_t hash_size = 0;
@@ -184,6 +230,7 @@ static S2N_RESULT s2n_select_psk_identity(struct s2n_connection *conn, struct s2
 static S2N_RESULT s2n_client_psk_recv_identity_list(struct s2n_connection *conn, struct s2n_stuffer *wire_identities_in)
 {
     RESULT_ENSURE_REF(conn);
+    RESULT_ENSURE_REF(conn->config);
     RESULT_ENSURE_REF(wire_identities_in);
 
     struct s2n_offered_psk_list identity_list = {
@@ -192,7 +239,7 @@ static S2N_RESULT s2n_client_psk_recv_identity_list(struct s2n_connection *conn,
     };
 
     if (conn->config->psk_selection_cb) {
-        RESULT_GUARD_POSIX(conn->config->psk_selection_cb(conn, &identity_list));
+        RESULT_GUARD_POSIX(conn->config->psk_selection_cb(conn, conn->config->psk_selection_ctx, &identity_list));
     } else {
         RESULT_GUARD(s2n_select_psk_identity(conn, &identity_list));
     }

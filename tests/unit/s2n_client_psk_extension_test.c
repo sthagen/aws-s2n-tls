@@ -25,6 +25,8 @@
 #define TEST_BYTES_2 0x0A, 0x0B, 0x0C
 #define TEST_BYTES_SIZE_2 0x00, 0x03
 
+#define MILLIS_TO_NANOS(millis) (millis * (uint64_t)ONE_MILLISEC_IN_NANOS)
+
 struct s2n_psk_test_case {
     s2n_hmac_algorithm hmac_alg;
     uint8_t hash_size;
@@ -32,15 +34,16 @@ struct s2n_psk_test_case {
     size_t identity_size;
 };
 
-uint16_t s2n_test_customer_wire_index_choice;
-static int s2n_test_select_psk_identity_callback(struct s2n_connection *conn,
+static int s2n_test_select_psk_identity_callback(struct s2n_connection *conn, void *context,
         struct s2n_offered_psk_list *psk_identity_list)
 {
+    uint16_t *wire_index_choice = (uint16_t*) context;
+
     struct s2n_offered_psk offered_psk = { 0 };
     uint16_t idx = 0;
     while(s2n_offered_psk_list_has_next(psk_identity_list)) {
         POSIX_GUARD(s2n_offered_psk_list_next(psk_identity_list, &offered_psk));
-        if (idx == s2n_test_customer_wire_index_choice) {
+        if (idx == *wire_index_choice) {
             POSIX_GUARD(s2n_offered_psk_list_choose_psk(psk_identity_list, &offered_psk));
             break;
         }
@@ -49,7 +52,7 @@ static int s2n_test_select_psk_identity_callback(struct s2n_connection *conn,
     return S2N_SUCCESS;
 }
 
-static int s2n_test_error_select_psk_identity_callback(struct s2n_connection *conn,
+static int s2n_test_error_select_psk_identity_callback(struct s2n_connection *conn, void *context,
         struct s2n_offered_psk_list *psk_identity_list)
 {
     POSIX_BAIL(S2N_ERR_UNIMPLEMENTED);
@@ -61,6 +64,12 @@ static S2N_RESULT s2n_write_test_identity(struct s2n_stuffer *out, struct s2n_bl
     RESULT_GUARD_POSIX(s2n_stuffer_write(out, identity));
     RESULT_GUARD_POSIX(s2n_stuffer_write_uint32(out, 0));
     return S2N_RESULT_OK;
+}
+
+static int mock_time(void *data, uint64_t *nanoseconds)
+{
+    *nanoseconds = MILLIS_TO_NANOS(500);
+    return S2N_SUCCESS;
 }
 
 int main(int argc, char **argv)
@@ -181,6 +190,60 @@ int main(int argc, char **argv)
         EXPECT_SUCCESS(s2n_connection_free(conn));
     }
 
+    /* Test: s2n_generate_obfuscated_ticket_age */
+    {
+        uint32_t output = 0;
+        uint64_t current_time = 0;
+        struct s2n_psk psk = { 0 };
+        psk.type = S2N_PSK_TYPE_RESUMPTION;
+
+        /* Current time is smaller than ticket issue time */
+        {
+            current_time = 0;
+            psk.ticket_issue_time = 10;
+            EXPECT_ERROR_WITH_ERRNO(s2n_generate_obfuscated_ticket_age(&psk, current_time, &output), S2N_ERR_SAFETY);
+        }
+
+        /* Ticket age is too large to fit in a uint32_t */
+        {
+            current_time = UINT64_MAX;
+            psk.ticket_issue_time = 0;
+            EXPECT_ERROR_WITH_ERRNO(s2n_generate_obfuscated_ticket_age(&psk, current_time, &output), S2N_ERR_SAFETY);
+        }
+
+        /* External psk */
+        {
+            psk.type = S2N_PSK_TYPE_EXTERNAL;
+            EXPECT_OK(s2n_generate_obfuscated_ticket_age(&psk, current_time, &output));
+            EXPECT_EQUAL(output, 0);
+        }
+
+        struct {
+            uint64_t current_time;
+            uint64_t ticket_issue_time;
+            uint32_t ticket_age_add;
+            uint32_t expected_output;
+        } test_cases[] = {
+            { .current_time = MILLIS_TO_NANOS(50), .ticket_issue_time = 0, .ticket_age_add = 50, .expected_output = 100 },
+            { .current_time = MILLIS_TO_NANOS(500), .ticket_issue_time = 0, .ticket_age_add = 50, .expected_output = 550 },
+            { .current_time = MILLIS_TO_NANOS(UINT32_MAX), .ticket_issue_time = 0, .ticket_age_add = 1, .expected_output = 0 },
+            { .current_time = MILLIS_TO_NANOS(UINT32_MAX), .ticket_issue_time = 0, .ticket_age_add = 2, .expected_output = 1 },
+            { .current_time = MILLIS_TO_NANOS(UINT32_MAX), .ticket_issue_time = 0, .ticket_age_add = 50, .expected_output = 49 },
+            { .current_time = MILLIS_TO_NANOS(0), .ticket_issue_time = 0, .ticket_age_add = 50, .expected_output = 50 },
+        };
+
+        for (size_t i = 0; i < s2n_array_len(test_cases); i++) {
+            output = 0;
+            current_time = test_cases[i].current_time;
+            psk.ticket_issue_time = test_cases[i].ticket_issue_time;
+            psk.ticket_age_add = test_cases[i].ticket_age_add;
+            psk.type = S2N_PSK_TYPE_RESUMPTION;
+
+            EXPECT_OK(s2n_generate_obfuscated_ticket_age(&psk, current_time, &output));
+            EXPECT_EQUAL(output, test_cases[i].expected_output);
+        }
+    }
+
     /* Test: s2n_client_psk_send */
     {
         /* Send a single PSK identity */
@@ -282,6 +345,41 @@ int main(int argc, char **argv)
                     + sizeof(uint16_t)) /* size of binder list size */;
 
             EXPECT_SUCCESS(s2n_connection_free(conn));
+            EXPECT_SUCCESS(s2n_stuffer_free(&out));
+        }
+
+        /* Send a resumption psk identity */
+        {
+            struct s2n_stuffer out = { 0 };
+            EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&out, 0));
+
+            struct s2n_connection *conn;
+            EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_CLIENT));
+
+            struct s2n_config *config = s2n_config_new();
+            EXPECT_NOT_NULL(config);
+            EXPECT_SUCCESS(s2n_config_set_wall_clock(config, mock_time, NULL));
+            EXPECT_SUCCESS(s2n_connection_set_config(conn, config));
+
+            struct s2n_psk *psk = NULL;
+            EXPECT_OK(s2n_array_pushback(&conn->psk_params.psk_list, (void**) &psk));
+            EXPECT_OK(s2n_psk_init(psk, S2N_PSK_TYPE_RESUMPTION));
+            EXPECT_SUCCESS(s2n_psk_set_identity(psk, test_identity, sizeof(test_identity)));
+            psk->hmac_alg = S2N_HMAC_SHA384;
+            psk->ticket_age_add = 50;
+            psk->ticket_issue_time = 0;
+
+            EXPECT_SUCCESS(s2n_client_psk_extension.send(conn, &out));
+
+            EXPECT_SUCCESS(s2n_stuffer_skip_read(&out, sizeof(uint16_t) /* identity_list_size */ +
+                sizeof(uint16_t) /* identity_size */ + sizeof(test_identity)));
+
+            uint32_t obfuscated_ticket_age = 0;
+            EXPECT_SUCCESS(s2n_stuffer_read_uint32(&out, &obfuscated_ticket_age));
+            EXPECT_TRUE(obfuscated_ticket_age == 550);
+
+            EXPECT_SUCCESS(s2n_connection_free(conn));
+            EXPECT_SUCCESS(s2n_config_free(config));
             EXPECT_SUCCESS(s2n_stuffer_free(&out));
         }
 
@@ -574,7 +672,7 @@ int main(int argc, char **argv)
         {
             struct s2n_config *config = s2n_config_new();
             EXPECT_NOT_NULL(config);
-            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_error_select_psk_identity_callback));
+            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_error_select_psk_identity_callback, NULL));
 
             struct s2n_connection *conn;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
@@ -594,7 +692,9 @@ int main(int argc, char **argv)
         {
             struct s2n_config *config = s2n_config_new();
             EXPECT_NOT_NULL(config);
-            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_select_psk_identity_callback));
+
+            uint16_t expected_wire_choice = 0;
+            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_select_psk_identity_callback, &expected_wire_choice));
 
             struct s2n_connection *conn;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
@@ -609,7 +709,6 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire_identities_in, 0));
             EXPECT_OK(s2n_write_test_identity(&wire_identities_in, &match_psk->identity));
 
-            s2n_test_customer_wire_index_choice = 0;
             EXPECT_OK(s2n_client_psk_recv_identity_list(conn, &wire_identities_in));
             EXPECT_EQUAL(conn->psk_params.chosen_psk, match_psk);
             EXPECT_EQUAL(conn->psk_params.chosen_psk_wire_index, 0);
@@ -623,7 +722,9 @@ int main(int argc, char **argv)
         {
             struct s2n_config *config = s2n_config_new();
             EXPECT_NOT_NULL(config);
-            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_select_psk_identity_callback));
+
+            uint16_t expected_wire_choice = 10;
+            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_select_psk_identity_callback, &expected_wire_choice));
 
             struct s2n_connection *conn;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
@@ -638,7 +739,6 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire_identities_in, 0));
             EXPECT_OK(s2n_write_test_identity(&wire_identities_in, &match_psk->identity));
 
-            s2n_test_customer_wire_index_choice = 10;
             EXPECT_ERROR(s2n_client_psk_recv_identity_list(conn, &wire_identities_in));
             EXPECT_EQUAL(conn->psk_params.chosen_psk, NULL);
 
@@ -651,7 +751,9 @@ int main(int argc, char **argv)
         {
             struct s2n_config *config = s2n_config_new();
             EXPECT_NOT_NULL(config);
-            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_select_psk_identity_callback));
+
+            uint16_t expected_wire_choice = 0;
+            EXPECT_SUCCESS(s2n_config_set_psk_selection_callback(config, s2n_test_select_psk_identity_callback, &expected_wire_choice));
 
             struct s2n_connection *conn;
             EXPECT_NOT_NULL(conn = s2n_connection_new(S2N_SERVER));
@@ -669,7 +771,6 @@ int main(int argc, char **argv)
             EXPECT_SUCCESS(s2n_stuffer_growable_alloc(&wire_identities_in, 0));
             EXPECT_OK(s2n_write_test_identity(&wire_identities_in, &wire_identity));
 
-            s2n_test_customer_wire_index_choice = 0;
             EXPECT_ERROR(s2n_client_psk_recv_identity_list(conn, &wire_identities_in));
             EXPECT_EQUAL(conn->psk_params.chosen_psk, NULL);
 
