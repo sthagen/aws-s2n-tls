@@ -38,7 +38,7 @@ int s2n_tls13_mac_verify(struct s2n_tls13_keys *keys, struct s2n_blob *finished_
 
     S2N_ERROR_IF(!s2n_constant_time_equals(finished_verify->data, wire_verify->data, keys->size), S2N_ERR_BAD_MESSAGE);
 
-    return 0;
+    return S2N_SUCCESS;
 }
 
 /*
@@ -55,14 +55,14 @@ static int s2n_tls13_keys_init_with_ref(struct s2n_tls13_keys *handshake, s2n_hm
     POSIX_GUARD(s2n_blob_init(&handshake->derive_secret, derive, handshake->size));
     POSIX_GUARD(s2n_hmac_new(&handshake->hmac));
 
-    return 0;
+    return S2N_SUCCESS;
 }
 
 int s2n_tls13_keys_from_conn(struct s2n_tls13_keys *keys, struct s2n_connection *conn)
 {
-    POSIX_GUARD(s2n_tls13_keys_init_with_ref(keys, conn->secure.cipher_suite->prf_alg, conn->secure.rsa_premaster_secret, conn->secure.master_secret));
+    POSIX_GUARD(s2n_tls13_keys_init_with_ref(keys, conn->secure.cipher_suite->prf_alg, conn->secrets.rsa_premaster_secret, conn->secrets.master_secret));
 
-    return 0;
+    return S2N_SUCCESS;
 }
 
 int s2n_tls13_compute_ecc_shared_secret(struct s2n_connection *conn, struct s2n_blob *shared_secret) {
@@ -93,7 +93,7 @@ int s2n_tls13_compute_ecc_shared_secret(struct s2n_connection *conn, struct s2n_
         POSIX_GUARD(s2n_ecc_evp_compute_shared_secret_from_params(server_key, client_key, shared_secret));
     }
 
-    return 0;
+    return S2N_SUCCESS;
 }
 
 /* Computes the ECDHE+PQKEM hybrid shared secret as defined in
@@ -200,7 +200,6 @@ int s2n_tls13_handle_early_secret(struct s2n_connection *conn)
     return S2N_SUCCESS;
 }
 
-
 int s2n_tls13_handle_early_traffic_secret(struct s2n_connection *conn)
 {
     POSIX_ENSURE_REF(conn);
@@ -263,7 +262,7 @@ int s2n_tls13_handle_handshake_master_secret(struct s2n_connection *conn)
 
     POSIX_GUARD(s2n_tls13_extract_handshake_secret(&secrets, &shared_secret));
 
-    return 0;
+    return S2N_SUCCESS;
 }
 
 int s2n_tls13_handle_handshake_traffic_secret(struct s2n_connection *conn, s2n_mode mode)
@@ -331,7 +330,7 @@ int s2n_tls13_handle_handshake_traffic_secret(struct s2n_connection *conn, s2n_m
      */
     POSIX_GUARD(s2n_zero_sequence_number(conn, mode));
 
-    return 0;
+    return S2N_SUCCESS;
 }
 
 static int s2n_tls13_handle_application_secret(struct s2n_connection *conn, s2n_mode mode)
@@ -346,12 +345,12 @@ static int s2n_tls13_handle_application_secret(struct s2n_connection *conn, s2n_
     struct s2n_session_key *session_key;
     s2n_secret_type_t secret_type;
     if (mode == S2N_CLIENT) {
-        app_secret_data = conn->secure.client_app_secret;
+        app_secret_data = conn->secrets.client_app_secret;
         implicit_iv_data = conn->secure.client_implicit_iv;
         session_key = &conn->secure.client_key;
         secret_type = S2N_CLIENT_APPLICATION_TRAFFIC_SECRET;
     } else {
-        app_secret_data = conn->secure.server_app_secret;
+        app_secret_data = conn->secrets.server_app_secret;
         implicit_iv_data = conn->secure.server_implicit_iv;
         session_key = &conn->secure.server_key;
         secret_type = S2N_SERVER_APPLICATION_TRAFFIC_SECRET;
@@ -527,11 +526,11 @@ int s2n_update_application_traffic_keys(struct s2n_connection *conn, s2n_mode mo
 
     if (mode == S2N_CLIENT) {
         old_key = &conn->secure.client_key;
-        POSIX_GUARD(s2n_blob_init(&old_app_secret, conn->secure.client_app_secret, keys.size));
+        POSIX_GUARD(s2n_blob_init(&old_app_secret, conn->secrets.client_app_secret, keys.size));
         POSIX_GUARD(s2n_blob_init(&app_iv, conn->secure.client_implicit_iv, S2N_TLS13_FIXED_IV_LEN));
     } else {
         old_key = &conn->secure.server_key;
-        POSIX_GUARD(s2n_blob_init(&old_app_secret, conn->secure.server_app_secret, keys.size));
+        POSIX_GUARD(s2n_blob_init(&old_app_secret, conn->secrets.server_app_secret, keys.size));
         POSIX_GUARD(s2n_blob_init(&app_iv, conn->secure.server_implicit_iv, S2N_TLS13_FIXED_IV_LEN));  
     }
 
