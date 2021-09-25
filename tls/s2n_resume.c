@@ -156,8 +156,7 @@ static int s2n_tls12_deserialize_resumption_state(struct s2n_connection *conn, s
 
     POSIX_GUARD(s2n_stuffer_read_bytes(from, conn->secrets.master_secret, S2N_TLS_SECRET_LEN));
 
-    /* TODO: https://github.com/aws/s2n-tls/issues/2990 */
-    if (S2N_IN_TEST && s2n_stuffer_data_available(from)) {
+    if (s2n_stuffer_data_available(from)) {
         uint8_t ems_negotiated = 0;
         POSIX_GUARD(s2n_stuffer_read_uint8(from, &ems_negotiated));
 
@@ -224,8 +223,7 @@ static S2N_RESULT s2n_tls12_client_deserialize_session_state(struct s2n_connecti
 
     RESULT_GUARD_POSIX(s2n_stuffer_read_bytes(from, conn->secrets.master_secret, S2N_TLS_SECRET_LEN));
 
-    /* TODO: https://github.com/aws/s2n-tls/issues/2990 */
-    if (S2N_IN_TEST && s2n_stuffer_data_available(from)) {
+    if (s2n_stuffer_data_available(from)) {
         uint8_t ems_negotiated = 0;
         RESULT_GUARD_POSIX(s2n_stuffer_read_uint8(from, &ems_negotiated));
         conn->ems_negotiated = ems_negotiated;
@@ -961,7 +959,8 @@ int s2n_config_set_initial_ticket_count(struct s2n_config *config, uint8_t num)
     return S2N_SUCCESS;
 }
 
-int s2n_connection_add_new_tickets_to_send(struct s2n_connection *conn, uint8_t num) {
+int s2n_connection_add_new_tickets_to_send(struct s2n_connection *conn, uint8_t num)
+{
     POSIX_ENSURE_REF(conn);
     POSIX_GUARD_RESULT(s2n_psk_validate_keying_material(conn));
 
@@ -969,6 +968,15 @@ int s2n_connection_add_new_tickets_to_send(struct s2n_connection *conn, uint8_t 
     POSIX_ENSURE(out <= UINT16_MAX, S2N_ERR_INTEGER_OVERFLOW);
     conn->tickets_to_send = out;
 
+    return S2N_SUCCESS;
+}
+
+int s2n_connection_get_tickets_sent(struct s2n_connection *conn, uint16_t *num)
+{
+    POSIX_ENSURE_REF(conn);
+    POSIX_ENSURE_REF(num);
+    POSIX_ENSURE(conn->mode == S2N_SERVER, S2N_ERR_CLIENT_MODE);
+    *num = conn->tickets_sent;
     return S2N_SUCCESS;
 }
 
