@@ -34,8 +34,7 @@
 #define MAX_CONNECTIONS 1000
 
 /* This is roughly the current memory usage per connection */
-#define MEM_PER_CONNECTION (48 * 1024)
-
+#define MEM_PER_CONNECTION (49 * 1024)
 /* This is the maximum memory per connection including 4KB of slack */
 #define MAX_MEM_PER_CONNECTION (MEM_PER_CONNECTION + 4 * 1024)
 
@@ -72,7 +71,7 @@ int main(int argc, char **argv)
     char *private_key;
 
     BEGIN_TEST();
-    EXPECT_SUCCESS(s2n_disable_tls13());
+    EXPECT_SUCCESS(s2n_disable_tls13_in_test());
 
     struct s2n_test_io_pair io_pair;
     EXPECT_SUCCESS(s2n_io_pair_init_non_blocking(&io_pair));
