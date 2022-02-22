@@ -231,6 +231,13 @@ try_compile(
         SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/cpuid.c"
 )
 
+# Determine if features.h is available
+try_compile(
+        S2N_FEATURES_AVAILABLE
+        ${CMAKE_BINARY_DIR}
+        SOURCES "${CMAKE_CURRENT_LIST_DIR}/tests/features/features.c"
+)
+
 # Determine if __attribute__((fallthrough)) is available
 try_compile(
         FALL_THROUGH_SUPPORTED
@@ -376,6 +383,10 @@ if(S2N_CPUID_AVAILABLE)
     target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_CPUID_AVAILABLE)
 endif()
 
+if(S2N_FEATURES_AVAILABLE)
+    target_compile_options(${PROJECT_NAME} PUBLIC -DS2N_FEATURES_AVAILABLE)
+endif()
+
 target_compile_options(${PROJECT_NAME} PUBLIC -fPIC)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE -D_POSIX_C_SOURCE=200809L)
@@ -436,7 +447,7 @@ if (LIBCRYPTO_SUPPORTS_EVP_MD_CTX_SET_PKEY_CTX)
 endif()
 
 if (S2N_INTERN_LIBCRYPTO)
-    if (NOT LibCrypto_STATIC_LIBRARY)
+    if (NOT crypto_STATIC_LIBRARY)
         message(FATAL_ERROR "libcrypto interning requires a static build of libcrypto.a to be available")
     endif()
 
@@ -444,7 +455,7 @@ if (S2N_INTERN_LIBCRYPTO)
         OUTPUT libcrypto.symbols
         COMMAND
           # copy the static version of libcrypto
-          cp ${LibCrypto_STATIC_LIBRARY} libcrypto.a &&
+          cp ${crypto_STATIC_LIBRARY} libcrypto.a &&
           # dump all of the symbols and prefix them with `s2n$`
           bash -c "nm libcrypto.a | awk '/ [A-Z] /{print $3\" s2n$\"$3}' | sort | uniq > libcrypto.symbols" &&
           # redefine the libcrypto libary symbols
