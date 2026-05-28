@@ -44,6 +44,14 @@ impl MetricRecord {
 
 impl metrique_writer::Entry for MetricRecord {
     fn write<'a>(&'a self, writer: &mut impl metrique_writer::EntryWriter<'a>) {
+        // "Operation" is a reserved label in some telemetry systems,
+        // so the key generally shouldn't be changed.
+        let operation = if self.attribution.component.is_empty() {
+            "TlsTelemetry".to_owned()
+        } else {
+            format!("TlsTelemetry.{}", self.attribution.component)
+        };
+        writer.value("Operation", &operation);
         writer.value("service", &self.attribution.service);
         writer.value("resource", &self.attribution.resource);
         self.handshake.write(writer)
@@ -155,28 +163,28 @@ impl HandshakeRecordInProgress {
         if conn.client_hello_is_sslv2()? {
             self.sslv2_client_hello.fetch_add(1, Ordering::Relaxed);
         } else {
-            let supported_parameter = ClientHelloSupportedParameters::new(client_hello);
+            let supported_parameter = ClientHelloSupportedParameters::new(client_hello)?;
 
             supported_parameter
-                .supported_versions()?
+                .supported_versions()
                 .iter()
                 .for_each(|version| self.supported_protocols.increment(version));
 
             supported_parameter
-                .supported_ciphers()?
+                .supported_ciphers()
                 .iter()
                 .for_each(|cipher| self.supported_ciphers.increment(cipher));
 
             supported_parameter
-                .supported_groups()?
+                .supported_groups()
                 .iter()
-                .flatten()
+                .flat_map(|groups| groups.iter())
                 .for_each(|group| self.supported_groups.increment(group));
 
             supported_parameter
-                .supported_signatures()?
+                .supported_signatures()
                 .iter()
-                .flatten()
+                .flat_map(|sigs| sigs.iter())
                 .for_each(|signature| self.supported_signatures.increment(signature));
 
             if General20251201::supported(&supported_parameter) {

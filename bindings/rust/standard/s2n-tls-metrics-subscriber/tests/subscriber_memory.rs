@@ -41,6 +41,7 @@ fn attribution() -> Attribution {
     Attribution {
         service: "memtest".to_owned(),
         resource: "memtest".to_owned(),
+        component: "memtest".to_owned(),
     }
 }
 
@@ -135,8 +136,8 @@ fn subscriber_allocation_budget() {
     // Block counts are deterministic per code path so we use strict equality;
     // byte counts can drift with capacity rounding so we use fuzzy_equals.
     const HOT_PATH: AllocDelta = AllocDelta {
-        blocks: N * 40,
-        bytes: N * 1720,
+        blocks: N * 8,
+        bytes: N * 344,
     };
 
     // The +(N + 31) / 32 term tracks std mpsc growing its node arena in
@@ -147,8 +148,8 @@ fn subscriber_allocation_budget() {
     // node), so adding fields to either type bumps this number by
     // roughly (field_size * 2) * N.
     const EXPORT: AllocDelta = AllocDelta {
-        blocks: N * 3 + (N + 31) / 32,
-        bytes: 511_528,
+        blocks: N * 4 + (N + 31) / 32,
+        bytes: 512_928,
     };
 
     // Subscriber state is fixed-size, so nothing should be retained across
